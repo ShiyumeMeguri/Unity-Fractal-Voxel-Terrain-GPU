@@ -199,7 +199,7 @@ namespace OptIn.Voxel
 
                 /* 3. 生成网格（核心算法与 B 版统一） */
                 VertexBuffer vbuf = new VertexBuffer();
-                MarchingCubesGenerateMesh(vbuf, voxelAt, chunkSize);
+                DualContouringGenerateMesh(vbuf, voxelAt, chunkSize);
 
                 /* 4. 转存到 NativeArray 供 Mesh API 使用 */
                 int vCount = vbuf.Vertices.Count;
@@ -246,7 +246,7 @@ namespace OptIn.Voxel
 
         /* ======================= Marching‑Cubes / Dual‑Contouring ======================= */
 
-        private static void MarchingCubesGenerateMesh(VertexBuffer vbuf,
+        private static void DualContouringGenerateMesh(VertexBuffer vbuf,
                                                       GetVoxelAt voxelAt,
                                                       int3 chunkSize)
         {
