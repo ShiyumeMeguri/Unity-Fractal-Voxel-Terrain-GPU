@@ -3,6 +3,7 @@
 #pragma kernel SetVoxel
 
 #include "Ruri_Common_FractalLibrary.hlsl"
+#include "Ruri_Common_FractalWorldLibrary.hlsl"
 
 // 定义体素数据结构，32位打包存储：
 // 低16位：texId， 接着8位：shapeId， 最后8位：metadata
@@ -70,12 +71,17 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     
     // 克莱因群 DE
     float3 kleinianPos;
-    //float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
-    float kleinianDistance = KleinianDE(fractalPos * sqrt(length(mandelbrotPos)), minFractalPos, maxFractalPos, kleinianPos);
+    float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
+    //float kleinianDistance = KleinianDE(fractalPos * sqrt(length(mandelbrotPos)), minFractalPos, maxFractalPos, kleinianPos);
+    
+    // fdSGWw DE
+    float3 fdSGWwPos;
+    float fdSGWwDistance = FdSGWwWorldDE(fractalPos, fdSGWwPos);
     
     //minDistance = min(minDistance, quaternionJuliaDistance);
     //minDistance = min(minDistance, mandelbrotDistance);
-    minDistance = min(minDistance, kleinianDistance);
+    //minDistance = min(minDistance, kleinianDistance);
+    minDistance = min(minDistance, fdSGWwDistance);
     //minDistance = min(minDistance, juliaDistance);
     //minDistance = min(minDistance, amazingBoxDistance);
     //minDistance = min(minDistance, mandelbulbDistance);
@@ -86,14 +92,30 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
 }
 
 //--------------------------- SD → Density ---------------------------//
-float SignedDistanceToDensity(float sd)
+// 调整此函数以获得更平滑的过渡
+// sd: signed distance. 负数在内部, 正数在外部.
+// 我们希望密度: 内部为正, 外部为负. 所以通常传入 -sd.
+float SignedDistanceToDensity(float signedDist, float smoothFactor, float densityScale)
 {
-    float  _densitySmoothFactor = 0.02;     // 越大曲面越“软”，锯齿更少；过大会失真，建议 0.02–0.1
-    float  _densityScale = 1;               // >1 让壳更薄，<1 让壳更厚
-    
-    float smoothFactor = max(_densitySmoothFactor, 1e-5);
-    sd *= _densityScale;
-    return sd / (abs(sd) + smoothFactor);     // 连续且 C¹
+    // smoothFactor: 控制过渡带的宽度。
+    // 值越大，过渡带越宽，表面看起来越“软”和“平滑”，但可能丢失尖锐特征。
+    // 值越小，过渡带越窄，表面越接近原始SDF的0等值面，但如果SDF本身有噪声或量化严重，则更容易出现锯齿。
+    // 对于8位量化，较大的smoothFactor有助于在多个量化级别上分布过渡。
+    // 建议从体素大小的几分之一开始尝试，例如，如果体素大小为1，则 smoothFactor 可以是 0.1 到 0.5，甚至更大。
+    // 注意：这里的 signedDist 应该是你希望映射到 (-1, 1) 区间的值。
+    // 如果你的 SDF 是标准的 (内部 < 0, 外部 > 0)，而你希望密度是 (内部 > 0, 外部 < 0)，
+    // 那么在调用此函数前应该传入 -sd。
+
+    signedDist *= densityScale; // 调整"壳"的厚度感知
+
+    // 使用 `clamp` 防止 `smoothFactor` 过小导致除零或精度问题
+    float actualSmoothFactor = max(smoothFactor, 1e-5f);
+
+    // 函数: x / (abs(x) + k)
+    // 这是一个简单有效的S型函数，值域 (-1, 1)，C¹连续
+    // 当 x -> 0 时, 斜率约为 1/k
+    // 当 x 很大时, 趋近于 +/-1
+    return signedDist / (abs(signedDist) + actualSmoothFactor);
 }
 
 // 主体计算函数，每个线程组 4×4×4 个线程
@@ -112,18 +134,41 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float4 minFractalPos = float4(-0.3252, -0.7862, -0.0948, 0.678);
     float4 maxFractalPos = float4( 0.3457,  1.0218,  1.2215, 0.9);
 
-    // 对于 Marching Cubes，需要连续的密度场——将距离反转得到密度
     float sd = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
-    float density = clamp(SignedDistanceToDensity(-sd), -1.0, 1.0);
+
+    // --- 参数调整区 ---
+    // _densitySmoothFactor: 这是关键！
+    // 原始值 0.02 可能对于某些SDF来说过渡太锐利，特别是考虑到后续的8位量化。
+    // 尝试更大的值，例如 0.05, 0.1, 甚至 0.2 或更大，取决于你的fractalPos的尺度和期望的平滑度。
+    // 这个值可以理解为SDF空间中，密度从约-0.7变化到约+0.7所跨越的距离。
+    // 如果你的体素之间的SDF变化很小，那么小的smoothFactor也可以。
+    // 如果你的体素之间的SDF变化很大，或者SDF本身不够平滑，那么需要大的smoothFactor。
+    float input_densitySmoothFactor = 0.2f; // <--- 增加此值以获得更平滑的表面 (例如 0.05, 0.1, 0.2)
+    float input_densityScale = 1.0f;      // 保持或按需调整
+
+    // 对于 Marching Cubes/Dual Contouring，需要连续的密度场。
+    // 标准SDF: 内部 < 0, 表面 = 0, 外部 > 0
+    // 我们希望密度: 内部 > 0 (固体), 表面 = 0, 外部 < 0 (空气)
+    // 所以，我们将 -sd 传递给 SignedDistanceToDensity
+    float density = SignedDistanceToDensity(-sd, input_densitySmoothFactor, input_densityScale);
+    density = clamp(density, -1.0f, 1.0f); // 确保在[-1, 1]范围内
 
     // 根据密度正负决定纹理——密度大于0时认为是固体（texId设为1），否则为空气
-    uint texId = (density > 0.0) ? 1u : 0u;
-    // 为了使用 Marching Cubes 体素生成，所有体素采用等值（Isosurface）形状，shapeId固定为0
+    // DC 通常在 density = 0 的等值面上操作。
+    uint texId = (density > 0.0f) ? 1u : 0u;
+    // 为了使用 Dual Contouring 体素生成，所有体素采用等值（Isosurface）形状，shapeId固定为0
     uint shapeId = 0u;
 
-    // 通过 Density = (metadata-128)/127还原
-    uint metadata = (uint)(density * 127.0 + 128.0);
-    
+    // 通过 Density = (metadata-128)/127.0f 还原
+    // 这意味着 metadata = density * 127.0f + 128.0f
+    // 这个量化步骤是平滑度损失的主要来源之一。
+    // 如果 `input_densitySmoothFactor` 太小，那么靠近表面的 `density` 值会非常迅速地从 -1 跳到 1，
+    // 导致 `metadata` 在少数几个值之间跳跃，使得插值困难。
+    // 较大的 `input_densitySmoothFactor` 会使 `density` 在0附近变化更缓慢，
+    // 从而 `metadata` 值会更平缓地跨越多个级别，有利于后续的插值。
+    uint metadata = (uint)(density * 127.0f + 128.0f);
+    metadata = clamp(metadata, 0u, 255u); // 确保在[0, 255]范围内
+
     // 打包成 32 位数据：低16位存 texId，接下来的8位存 shapeId，再接下来的8位存 metadata
     asyncVoxelBuffer[index].packed = (metadata << 24) | (shapeId << 16) | (texId & 0xFFFF);
 }
