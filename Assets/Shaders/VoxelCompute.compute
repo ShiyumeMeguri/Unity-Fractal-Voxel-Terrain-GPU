@@ -82,6 +82,7 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     //minDistance = min(minDistance, mandelbrotDistance);
     //minDistance = min(minDistance, kleinianDistance);
     minDistance = min(minDistance, fdSGWwDistance);
+    //minDistance = min(minDistance, sphereDistance);
     //minDistance = min(minDistance, juliaDistance);
     //minDistance = min(minDistance, amazingBoxDistance);
     //minDistance = min(minDistance, mandelbulbDistance);
