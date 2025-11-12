@@ -1,4 +1,4 @@
-
+// Assets/ScriptsECS/Meshing/Jobs/SkirtClosestSurfaceJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -11,7 +11,7 @@ namespace OptIn.Voxel.Meshing
     {
         [ReadOnly] public NativeArray<VoxelData> Voxels;
         [WriteOnly] public NativeArray<bool> WithinThreshold;
-        [ReadOnly] public int3 PaddedChunkSize; // 添加字段
+        [ReadOnly] public int3 PaddedChunkSize;
 
         private const int PADDING_SEARCH_AREA = 3;
 
@@ -26,6 +26,7 @@ namespace OptIn.Voxel.Meshing
             int localIndex = index % faceArea;
             uint missing = negative ? 0u : (uint)PaddedChunkSize.x - 2;
 
+            // [修复] VoxelUtils.To3DIndex 返回 int3, 其 .xy 是 int2, 需要强制转换为 uint2
             uint2 flattened = (uint2)VoxelUtils.To3DIndex(localIndex, new int3(PaddedChunkSize.x, PaddedChunkSize.y, 1)).xy;
             uint3 position = VoxelUtils.UnflattenFromFaceRelative(flattened, direction, missing);
 
@@ -43,7 +44,8 @@ namespace OptIn.Voxel.Meshing
                     int2 offset = new int2(x, y);
                     int3 global = VoxelUtils.UnflattenFromFaceRelative(offset + basePosition2D, direction, (int)missing);
 
-                    if (math.all(global >= 0 & global < PaddedChunkSize.x)) // 修正边界检查
+                    // [修复] 边界检查应使用 PaddedChunkSize
+                    if (math.all(global >= 0 & global < PaddedChunkSize))
                     {
                         if (Voxels[VoxelUtils.To1DIndex((uint3)global, PaddedChunkSize)].IsSolid)
                         {

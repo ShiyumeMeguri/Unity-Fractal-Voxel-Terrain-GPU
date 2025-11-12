@@ -1,5 +1,4 @@
 // Assets/ScriptsECS/Meshing/Vertices.cs
-
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
@@ -15,6 +14,33 @@ namespace OptIn.Voxel.Meshing
             public float3 normal;
             public float4 layers;
             public float4 colour;
+
+            public void Add(float3 startVertex, float3 endVertex, int startIndex, int endIndex, ref NativeArray<VoxelData> voxels)
+            {
+                var start = voxels[startIndex];
+                var end = voxels[endIndex];
+
+                float value = math.unlerp(start.Density, end.Density, 0);
+                AddLerped(startVertex, endVertex, startIndex, endIndex, value, ref voxels);
+            }
+
+            public void AddLerped(float3 startVertex, float3 endVertex, int startIndex, int endIndex, float value, ref NativeArray<VoxelData> voxels)
+            {
+                position += math.lerp(startVertex, endVertex, value);
+                // Normal and layer data would be added here if available in VoxelData
+                // For now, let's assume we'll calculate normals later or they are not used in this specific path.
+            }
+
+
+            public void Finalize(int count)
+            {
+                if (count > 0)
+                {
+                    position /= count;
+                    normal = math.normalizesafe(normal);
+                    layers /= count;
+                }
+            }
         }
 
         public NativeArray<float3> positions;
@@ -30,26 +56,22 @@ namespace OptIn.Voxel.Meshing
             colours = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
         }
 
-        public void CopyTo(Vertices dst, int dstOffset, int length)
+        public Single this[int index]
         {
-            if (length > 0)
+            get => new Single
             {
-                NativeArray<float3>.Copy(positions, 0, dst.positions, dstOffset, length);
-                NativeArray<float3>.Copy(normals, 0, dst.normals, dstOffset, length);
-                NativeArray<float4>.Copy(layers, 0, dst.layers, dstOffset, length);
-                NativeArray<float4>.Copy(colours, 0, dst.colours, dstOffset, length);
-            }
-        }
-
-        public Vertices GetSubArray(int offset, int length)
-        {
-            return new Vertices
-            {
-                positions = positions.GetSubArray(offset, length),
-                normals = normals.GetSubArray(offset, length),
-                layers = layers.GetSubArray(offset, length),
-                colours = colours.GetSubArray(offset, length),
+                position = positions[index],
+                normal = normals[index],
+                layers = layers[index],
+                colour = colours[index]
             };
+            set
+            {
+                positions[index] = value.position;
+                normals[index] = value.normal;
+                layers[index] = value.layers;
+                colours[index] = value.colour;
+            }
         }
 
         public void SetMeshDataAttributes(int count, Mesh.MeshData data)
@@ -69,8 +91,6 @@ namespace OptIn.Voxel.Meshing
                 positions.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(0));
                 normals.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(1));
                 colours.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(2));
-                // Note: 'layers' are not standard vertex attributes, often packed into TexCoord or Color.
-                // Here we'll pack them into TexCoord0 for demonstration.
                 layers.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(3));
             }
         }

@@ -207,7 +207,7 @@ public partial class TerrainReadbackSystem : SystemBase
                 continue;
             }
 
-            var chunkData = new ChunkVoxelData(config.PaddedChunkSize, Allocator.Persistent);
+            var chunkData = new TerrainChunkVoxels(config.PaddedChunkSize, Allocator.Persistent);
             ecb.AddComponent(entity, chunkData);
 
             var slice = m_ReadbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
@@ -250,11 +250,11 @@ public partial class TerrainReadbackSystem : SystemBase
             {
                 SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
                 SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
-                if (SystemAPI.HasComponent<ChunkVoxelData>(entity))
+                if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
                 {
-                    var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
+                    var chunkVoxelData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
                     chunkVoxelData.Dispose();
-                    SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
+                    SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, false);
                 }
             }
             else

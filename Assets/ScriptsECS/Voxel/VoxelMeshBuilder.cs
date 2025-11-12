@@ -1,4 +1,5 @@
-﻿using OptIn.Voxel;
+﻿// Assets/ScriptsECS/Voxel/VoxelMeshBuilder.cs
+using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -9,7 +10,8 @@ public static class VoxelMeshBuilder
 {
     public static readonly int2 AtlasSize = new int2(8, 8);
 
-    public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize, NativeMeshData meshData, JobHandle dependency)
+    // [修复] 接收预计算的法线数组
+    public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize, NativeMeshData meshData, NativeArray<float3> precomputedNormals, JobHandle dependency)
     {
         meshData.counter.Count = 0;
         var job = new VoxelMeshBuildJob
@@ -19,6 +21,7 @@ public static class VoxelMeshBuilder
             vertices = meshData.nativeVertices,
             indices = meshData.nativeIndices,
             counter = meshData.counter.ToConcurrent(),
+            gradients = precomputedNormals // 传递法线
         };
         return job.Schedule(dependency);
     }
@@ -56,6 +59,7 @@ public static class VoxelMeshBuilder
     {
         [ReadOnly] public NativeArray<VoxelData> voxels;
         [ReadOnly] public int3 chunkSize;
+        [ReadOnly] public NativeArray<float3> gradients; // [修复] 接收法线
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<GPUVertex> vertices;
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> indices;
         public NativeCounter.Concurrent counter;
@@ -74,8 +78,8 @@ public static class VoxelMeshBuilder
             int crossings = 0;
             for (int i = 0; i < 12; i++)
             {
-                VoxelData v1 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 0]]);
-                VoxelData v2 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 1]]);
+                var v1 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 0]]);
+                var v2 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 1]]);
                 if (v1.IsIsosurface && v2.IsIsosurface && SignChanged(v1, v2))
                 {
                     float t = math.unlerp(v1.Density, v2.Density, 0f);
@@ -87,48 +91,9 @@ public static class VoxelMeshBuilder
             return crossings > 0 ? pointSum / crossings : (float3)pos + 0.5f;
         }
 
-        private float GetDensityForGradient(int3 pos)
-        {
-            return voxels[VoxelUtils.To1DIndex(pos, chunkSize)].Density;
-        }
-
-        private float3 CalculatePaddedGradient(int3 pos)
-        {
-            float dx, dy, dz;
-
-            if (pos.x == 0)
-                dx = GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos);
-            else if (pos.x == chunkSize.x - 1)
-                dx = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(1, 0, 0));
-            else
-                dx = (GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos - new int3(1, 0, 0))) * 0.5f;
-
-            if (pos.y == 0)
-                dy = GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos);
-            else if (pos.y == chunkSize.y - 1)
-                dy = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(0, 1, 0));
-            else
-                dy = (GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos - new int3(0, 1, 0))) * 0.5f;
-
-            if (pos.z == 0)
-                dz = GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos);
-            else if (pos.z == chunkSize.z - 1)
-                dz = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(0, 0, 1));
-            else
-                dz = (GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos - new int3(0, 0, 1))) * 0.5f;
-
-            return math.normalizesafe(-new float3(dx, dy, dz), new float3(0, 1, 0));
-        }
-
         public void Execute()
         {
-            int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
-            var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp);
-            for (int i = 0; i < numVoxels; i++)
-            {
-                gradients[i] = CalculatePaddedGradient(VoxelUtils.To3DIndex(i, chunkSize));
-            }
-
+            // [修复] 移除内部的法线计算，直接使用传入的gradients
             for (int x = 1; x < chunkSize.x - 1; x++)
                 for (int y = 1; y < chunkSize.y - 1; y++)
                     for (int z = 1; z < chunkSize.z - 1; z++)
@@ -188,8 +153,6 @@ public static class VoxelMeshBuilder
                             }
                         }
                     }
-
-            gradients.Dispose();
         }
     }
 
@@ -214,7 +177,7 @@ public static class VoxelMeshBuilder
         }
 
         int indexStart = quadIndex * 6;
-        int[] cubeIndices_tris = { 0, 2, 1, 0, 3, 2 }; // Correct winding for standard Unity quad
+        int[] cubeIndices_tris = { 0, 2, 1, 0, 3, 2 };
         for (int i = 0; i < 6; i++)
         {
             indices[indexStart + i] = vertexStart + cubeIndices_tris[i];

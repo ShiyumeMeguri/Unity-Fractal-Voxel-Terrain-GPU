@@ -14,7 +14,7 @@ public partial struct VoxelEditSystem : ISystem
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        m_ChunkQuery = state.GetEntityQuery(typeof(Chunk), typeof(ChunkVoxelData));
+        m_ChunkQuery = state.GetEntityQuery(typeof(Chunk), typeof(TerrainChunkVoxels));
         m_EditRequestQuery = state.GetEntityQuery(typeof(VoxelEditRequest));
         state.RequireForUpdate(m_EditRequestQuery);
         state.RequireForUpdate<TerrainConfig>();
@@ -43,9 +43,9 @@ public partial struct VoxelEditSystem : ISystem
 
             if (chunkMap.TryGetValue(chunkPos, out var chunkEntity))
             {
-                if (SystemAPI.HasComponent<ChunkVoxelData>(chunkEntity) && SystemAPI.IsComponentEnabled<ChunkVoxelData>(chunkEntity))
+                if (SystemAPI.HasComponent<TerrainChunkVoxels>(chunkEntity) && SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(chunkEntity))
                 {
-                    var voxelData = SystemAPI.GetComponent<ChunkVoxelData>(chunkEntity);
+                    var voxelData = SystemAPI.GetComponent<TerrainChunkVoxels>(chunkEntity);
                     if (voxelData.IsCreated)
                     {
                         var gridPos = (int3)math.floor(worldPos - (float3)(chunkPos * config.ChunkSize));

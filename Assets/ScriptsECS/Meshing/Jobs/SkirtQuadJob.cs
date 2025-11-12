@@ -1,236 +1,147 @@
+// Assets/ScriptsECS/Meshing/Jobs/SkirtQuadJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using OptIn.Voxel;
 
 namespace OptIn.Voxel.Meshing
 {
-
-    [BurstCompile(CompileSynchronously = true)]
+    [BurstCompile]
     public struct SkirtQuadJob : IJobParallelFor
     {
-        [ReadOnly]
-        public VoxelData voxels;
+        [ReadOnly] public NativeArray<VoxelData> Voxels;
+        [ReadOnly] public NativeArray<int> SkirtVertexIndicesGenerated;
+        [ReadOnly] public NativeArray<int> SkirtVertexIndicesCopied;
 
-        [ReadOnly]
-        public NativeArray<int> skirtVertexIndicesGenerated;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> SkirtForcedPerFaceIndices;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> SkirtStitchedIndices;
 
-        [ReadOnly]
-        public NativeArray<int> skirtVertexIndicesCopied;
+        public NativeCounter.Concurrent SkirtStitchedTriangleCounter;
+        public NativeMultiCounter.Concurrent SkirtForcedTriangleCounter;
+        [ReadOnly] public int3 PaddedChunkSize;
 
-
-        [WriteOnly]
-        [NativeDisableParallelForRestriction]
-        public NativeArray<int> skirtForcedPerFaceIndices;
-
-        [WriteOnly]
-        [NativeDisableParallelForRestriction]
-        public NativeArray<int> skirtStitchedIndices;
-
-        public NativeCounter.Concurrent skirtStitchedTriangleCounter;
-        public NativeMultiCounter.Concurrent skirtForcedTriangleCounter;
-
-        // Fetch vertex index for a specific position
-        // If it goes out of the chunk bounds, assume it is a skirt vertex's position we're trying to fetch
-        int FetchIndex(int3 position, int face)
+        private int FetchIndex(int3 position, int face)
         {
             int direction = face % 3;
-            int2 flattened = SkirtUtils.FlattenToFaceRelative(position, direction);
+            int2 flattened = VoxelUtils.FlattenToFaceRelative(position, direction);
             int other = position[direction];
 
-            // checks if we are dealing with a skirt vertex or a copied vertex in a particular direction
-            if (other < 0 || other > VoxelUtils.SIZE - 3)
-            {
-                // since the skirt generated vertices have 2 padding vertices (for edges), we need to add an offset 
-                flattened += 1;
-                flattened = math.clamp(flattened, 0, VoxelUtils.SKIRT_SIZE);
+            int skirtSize = PaddedChunkSize.x;
+            int faceArea = skirtSize * skirtSize;
 
-                // lookup in the appropriate 2D index table
-                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, VoxelUtils.SKIRT_SIZE);
-                int res = skirtVertexIndicesGenerated[lookup + VoxelUtils.SKIRT_FACE * face];
-                return res;
+            if (other < 0 || other > PaddedChunkSize.x - 3)
+            {
+                flattened += 1;
+                flattened = math.clamp(flattened, 0, skirtSize - 1);
+                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, skirtSize);
+                return SkirtVertexIndicesGenerated[lookup + faceArea * face];
             }
             else
             {
-                flattened = math.clamp(flattened, 0, VoxelUtils.SIZE);
-
-                // lookup in the appropriate 2D index table
-                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, VoxelUtils.SIZE);
-                int res = skirtVertexIndicesCopied[lookup + VoxelUtils.FACE * face];
-                return res;
+                flattened = math.clamp(flattened, 0, PaddedChunkSize.x - 1);
+                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, PaddedChunkSize.x);
+                return SkirtVertexIndicesCopied[lookup + faceArea * face];
             }
         }
 
-        // Check and edge and check if we must generate a quad in it's forward facing direction
-        void CheckEdge(uint2 flattened, uint3 unflattened, int index, bool negative, bool force, int face)
+        private void CheckEdge(uint2 flattened, uint3 unflattened, int edgeDirection, bool negative, bool force, int face)
         {
-            uint3 forward = DirectionOffsetUtils.FORWARD_DIRECTION[index];
-
+            uint3 forward = DirectionOffsetUtils.FORWARD_DIRECTION[edgeDirection];
             bool flip = !negative;
-
 
             if (!force)
             {
-                int baseIndex = VoxelUtils.PosToIndex(unflattened, VoxelUtils.SIZE);
-                int endIndex = VoxelUtils.PosToIndex(unflattened + forward, VoxelUtils.SIZE);
+                int baseIndex = VoxelUtils.To1DIndex(unflattened, PaddedChunkSize);
+                int endIndex = VoxelUtils.To1DIndex(unflattened + forward, PaddedChunkSize);
 
-                half start = voxels.densities[baseIndex];
-                half end = voxels.densities[endIndex];
-
-                if (start >= 0f == end >= 0f)
-                    return;
-
-                flip = end >= 0.0;
+                if (Voxels[baseIndex].IsSolid == Voxels[endIndex].IsSolid) return;
+                flip = Voxels[endIndex].IsSolid;
             }
 
-            int3 offset = (int3)((int3)unflattened + (int3)forward - math.int3(1));
-
-            // to help the fetcher a bit lol (I honestly don't know why I need this but I do... whatever)
+            int3 offset = (int3)unflattened + (int3)forward - 1;
             if (force)
             {
-                if (negative)
-                {
-                    offset[index] -= 1;
-                }
-                else
-                {
-                    offset[index] += 1;
-                }
+                offset[edgeDirection] += negative ? -1 : 1;
             }
 
-            // load the vertex indices inside this vector
             int4 v = int.MaxValue;
             for (int i = 0; i < 4; i++)
             {
-                v[i] = FetchIndex(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[index * 4 + i], face);
+                v[i] = FetchIndex(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[edgeDirection * 4 + i], face);
             }
 
-            /*
-            if (math.cmax(v) != int.MaxValue && math.cmin(v) >= 0 && !force) {
-                v.x = v[flip ? 0 : 2];
-                v.z = v[flip ? 2 : 0];
-                AddQuadsOrTris(new Triangulate {
-                    indices = v,
-                    triangle = false
-                }, skirtStitchedTriangleCounter, skirtStitchedIndices);
-            }
-            */
-
-            if (TryCalculateQuadOrTris(flip, v, out Triangulate data))
+            if (TryCalculateQuadOrTris(flip, v, out var data))
             {
                 if (force)
                 {
-                    NativeArray<int> faceIndicesSubArray = skirtForcedPerFaceIndices.GetSubArray(face * VoxelUtils.SKIRT_FACE * 6, VoxelUtils.SKIRT_FACE * 6);
-                    AddQuadsOrTris(data, skirtForcedTriangleCounter.ToConcurrentNativeCounter(face), faceIndicesSubArray);
+                    int faceIndexSize = PaddedChunkSize.x * PaddedChunkSize.y * 6;
+                    var faceIndicesSubArray = SkirtForcedPerFaceIndices.GetSubArray(face * faceIndexSize, faceIndexSize);
+                    AddQuadsOrTris(data, SkirtForcedTriangleCounter.ToConcurrentNativeCounter(face), faceIndicesSubArray);
                 }
                 else
                 {
-                    AddQuadsOrTris(data, skirtStitchedTriangleCounter, skirtStitchedIndices);
+                    AddQuadsOrTris(data, SkirtStitchedTriangleCounter, SkirtStitchedIndices);
                 }
             }
         }
 
-
-        static readonly int3[] DEDUPE_TRIS_THING = new int3[] {
-            new int3(0, 2, 3), // x/y, discard y
-            new int3(0, 1, 3), // x/z, discard z
-            new int3(0, 1, 2), // x/w, discard w
-            new int3(0, 1, 3), // y/z, discard z
-            new int3(0, 1, 2), // y/w, discard w
-            new int3(0, 1, 2), // z/w, discard w
+        private static readonly int3[] DEDUPE_TRIS_THING = {
+            new int3(0, 2, 3), new int3(0, 1, 3), new int3(0, 1, 2),
+            new int3(0, 1, 3), new int3(0, 1, 2), new int3(0, 1, 2)
         };
+        private static readonly int3[] IGNORE_SPECIFIC_VALUE_TRI = { new int3(1, 2, 3), new int3(0, 2, 3), new int3(0, 1, 3), new int3(0, 1, 2) };
 
-        static readonly int3[] IGNORE_SPECIFIC_VALUE_TRI = new int3[] {
-            new int3(1, 2, 3), // discard x
-            new int3(0, 2, 3), // discard y
-            new int3(0, 1, 3), // discard z
-            new int3(0, 1, 2), // discard w
-        };
+        private struct Triangulate { public int4 indices; public bool triangle; }
 
-        struct Triangulate
+        private static void AddQuadsOrTris(Triangulate data, NativeCounter.Concurrent counter, NativeArray<int> indices)
         {
-            public int4 indices;
-            public bool triangle;
-
-        }
-
-        static void AddQuadsOrTris(Triangulate triangulate, NativeCounter.Concurrent counter, NativeArray<int> indices)
-        {
-            int4 v = triangulate.indices;
-
-            if (triangulate.triangle)
+            int4 v = data.indices;
+            if (data.triangle)
             {
                 int triIndex = counter.Add(1) * 3;
-                indices[triIndex + 0] = v[0];
-                indices[triIndex + 1] = v[1];
-                indices[triIndex + 2] = v[2];
+                if (triIndex + 2 < indices.Length)
+                {
+                    indices[triIndex] = v.x;
+                    indices[triIndex + 1] = v.y;
+                    indices[triIndex + 2] = v.z;
+                }
             }
             else
             {
                 int triIndex = counter.Add(2) * 3;
-
-                indices[triIndex + 0] = v[0];
-                indices[triIndex + 1] = v[1];
-                indices[triIndex + 2] = v[2];
-
-                indices[triIndex + 3] = v[2];
-                indices[triIndex + 4] = v[3];
-                indices[triIndex + 5] = v[0];
+                if (triIndex + 5 < indices.Length)
+                {
+                    indices[triIndex] = v.x; indices[triIndex + 1] = v.y; indices[triIndex + 2] = v.z;
+                    indices[triIndex + 3] = v.z; indices[triIndex + 4] = v.w; indices[triIndex + 5] = v.x;
+                }
             }
         }
 
-        // Add quads/tris for stitched triangles (filling the gap between surface nets verts and copied verts)
-        // We NEED to have triangle fallback to handle the literal "edge" case (since there are only 3 vertices there)
-        static bool TryCalculateQuadOrTris(bool flip, int4 v, out Triangulate data)
+        // [修复] 重构if-else逻辑以避免变量重定义
+        private static bool TryCalculateQuadOrTris(bool flip, int4 v, out Triangulate data)
         {
             data = default;
-
-            // Ts gpt-ed kek
             int dupeType = 0;
-            dupeType |= math.select(0, 1, v.x == v.y);
-            dupeType |= math.select(0, 2, v.x == v.z);
-            dupeType |= math.select(0, 4, v.x == v.w);
-            dupeType |= math.select(0, 8, v.y == v.z && v.x != v.y);
-            dupeType |= math.select(0, 16, v.y == v.w && v.x != v.y && v.z != v.y);
-            dupeType |= math.select(0, 32, v.z == v.w && v.x != v.z && v.y != v.z);
+            if (v.x == v.y) dupeType |= 1; if (v.x == v.z) dupeType |= 2; if (v.x == v.w) dupeType |= 4;
+            if (v.y == v.z && v.x != v.y) dupeType |= 8; if (v.y == v.w && v.x != v.y && v.z != v.y) dupeType |= 16;
+            if (v.z == v.w && v.x != v.z && v.y != v.z) dupeType |= 32;
 
-            bool4 b4 = v == int.MaxValue;
-            int bitmask = math.bitmask(b4);
+            int bitmask = math.bitmask(v == int.MaxValue);
+            if (math.countbits(dupeType) > 1 || math.countbits(bitmask) > 1) return false;
 
-            // Means that there are more than 2 duplicate verts, not possible?
-            if (math.countbits(dupeType) > 1)
-            {
-                return false;
-            }
-
-            // Means that there are more than 2 invalid verts, not possible to create a tri nor a quad
-            if (math.countbits(bitmask) > 1)
-            {
-                return false;
-            }
-
-            // If there's only a SINGLE invalid index, then consider it as an extra duplicate one (and create a triangle for the valid ones instead of a quad)
             if (math.countbits(bitmask) == 1)
             {
                 int3 remapper = IGNORE_SPECIFIC_VALUE_TRI[math.tzcnt(bitmask)];
-                int3 uniques = new int3(v[remapper[0]], v[remapper[1]], v[remapper[2]]);
-
+                int3 uniques = new int3(v[remapper.x], v[remapper.y], v[remapper.z]);
                 data.triangle = true;
                 data.indices.x = uniques[flip ? 0 : 2];
                 data.indices.y = uniques[1];
                 data.indices.z = uniques[flip ? 2 : 0];
-
                 return true;
             }
-
-            if (dupeType == 0)
+            else if (dupeType == 0)
             {
-                if (math.cmax(v) == int.MaxValue | math.cmin(v) < 0)
-                {
-                    return false;
-                }
-
+                if (math.cmax(v) == int.MaxValue || math.cmin(v) < 0) return false;
                 data.triangle = false;
                 data.indices.x = v[flip ? 0 : 2];
                 data.indices.y = v[1];
@@ -240,14 +151,9 @@ namespace OptIn.Voxel.Meshing
             }
             else
             {
-                int config = math.tzcnt(dupeType);
-                int3 remapper = DEDUPE_TRIS_THING[config];
-                int3 uniques = new int3(v[remapper[0]], v[remapper[1]], v[remapper[2]]);
-
-                if (math.cmax(uniques) == int.MaxValue | math.cmin(v) < 0)
-                {
-                    return false;
-                }
+                int3 remapper = DEDUPE_TRIS_THING[math.tzcnt(dupeType)];
+                int3 uniques = new int3(v[remapper.x], v[remapper.y], v[remapper.z]);
+                if (math.cmax(uniques) == int.MaxValue || math.cmin(v) < 0) return false;
 
                 data.triangle = true;
                 data.indices.x = uniques[flip ? 0 : 2];
@@ -259,34 +165,22 @@ namespace OptIn.Voxel.Meshing
 
         public void Execute(int index)
         {
-            // we run the job for VoxelUtils.FACE since quad jobs always miss the last 2/1 voxels (due to missing indices)
-            // fine for us though...
             int face = index / VoxelUtils.FACE;
             int direction = face % 3;
             bool negative = face < 3;
             int localIndex = index % VoxelUtils.FACE;
 
-            // convert from 2D position to 3D using missing value
-            uint missing = negative ? 0 : ((uint)VoxelUtils.SIZE - 2);
-            uint2 flattened = VoxelUtils.IndexToPos2D(localIndex, VoxelUtils.SIZE);
-            uint3 position = SkirtUtils.UnflattenFromFaceRelative(flattened, direction, missing);
+            uint missing = negative ? 0u : (uint)PaddedChunkSize.x - 2;
+            uint2 flattened = VoxelUtils.IndexToPos2D(localIndex, PaddedChunkSize.x);
+            uint3 position = VoxelUtils.UnflattenFromFaceRelative(flattened, direction, missing);
 
-            if (math.any(flattened > VoxelUtils.SKIRT_SIZE - 2))
-            {
-                return;
-            }
+            // [修复] uint2 >= int 比较错误
+            if (math.any(flattened >= (uint)(PaddedChunkSize.x - 1))) return;
 
             for (int i = 0; i < 3; i++)
             {
                 bool force = direction == i;
-
-                // this skips checking the edge at a boundary if the edge is in the direction that we're looking at
-                // for example, if we are at the positive x boundary, you must NOT check the edge that goes in the x direction (would result in out of bound fetches)
-                // makes sense, since you well never generate quads in that direction anyways (impossible to have an edge crossing in the 3rd dimension that is missing from a 2D plane spanned by the other 2 basis vectors)
-                // (unless it's a forced quad, and in which case we don't care since we don't read voxel data anyways!!!)
-                if (position[i] > VoxelUtils.SIZE - 3 && !force)
-                    continue;
-
+                if (position[i] >= PaddedChunkSize.x - 3 && !force) continue;
                 CheckEdge(flattened, position, i, negative, force, face);
             }
         }

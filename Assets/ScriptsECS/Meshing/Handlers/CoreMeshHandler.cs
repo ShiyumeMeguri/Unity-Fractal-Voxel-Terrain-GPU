@@ -1,3 +1,4 @@
+// Assets/ScriptsECS/Meshing/Handlers/CoreMeshHandler.cs
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -8,18 +9,18 @@ namespace OptIn.Voxel.Meshing
     {
         public VoxelMeshBuilder.NativeMeshData MeshData;
         public JobHandle JobHandle;
-        private int3 m_PaddedChunkSize; // 新增字段来存储尺寸
+        private int3 m_PaddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            m_PaddedChunkSize = config.PaddedChunkSize; // 在初始化时存储
-            MeshData = new VoxelMeshBuilder.NativeMeshData(config.PaddedChunkSize);
+            m_PaddedChunkSize = config.PaddedChunkSize;
+            MeshData = new VoxelMeshBuilder.NativeMeshData(m_PaddedChunkSize);
         }
-
-        public void Schedule(ref ChunkVoxelData chunkVoxels, JobHandle dependency)
+        
+        // [修复] 接收NormalsHandler并将其法线数据传递下去
+        public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
-            // 使用存储的尺寸而不是静态变量
-            JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(chunkVoxels.Voxels, m_PaddedChunkSize, MeshData, dependency);
+            JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(chunkVoxels.Voxels, m_PaddedChunkSize, MeshData, normals.VoxelNormals, dependency);
         }
 
         public void Dispose()

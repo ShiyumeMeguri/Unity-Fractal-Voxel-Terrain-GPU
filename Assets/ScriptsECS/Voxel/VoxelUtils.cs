@@ -1,3 +1,4 @@
+// Assets/ScriptsECS/Voxel/VoxelUtils.cs
 using Unity.Mathematics;
 
 namespace OptIn.Voxel
@@ -5,6 +6,7 @@ namespace OptIn.Voxel
     public static class VoxelUtils
     {
         // --- 核心常量，与参考框架对齐 ---
+        public const int PHYSICAL_CHUNK_SIZE = 32;
         public const int SIZE = 34; // 对应 PaddedChunkSize 的维度
         public const int FACE = SIZE * SIZE;
         public const int VOLUME = SIZE * SIZE * SIZE;
@@ -31,11 +33,12 @@ namespace OptIn.Voxel
 
         public static int3 WorldToChunk(float3 worldPosition, int3 chunkSize)
         {
-            return new int3(
-                Floor(worldPosition.x / chunkSize.x),
-                Floor(worldPosition.y / chunkSize.y),
-                Floor(worldPosition.z / chunkSize.z)
-            );
+            return (int3)math.floor(worldPosition / chunkSize);
+        }
+
+        public static float3 ChunkToWorld(int3 chunkPosition, int3 chunkSize)
+        {
+            return chunkPosition * chunkSize;
         }
 
         public static bool BoundaryCheck(int3 position, int3 chunkSize)
@@ -58,22 +61,28 @@ namespace OptIn.Voxel
             return x < xi ? xi - 1 : xi;
         }
 
-        public static uint2 To2DIndex(int index, int size)
+        public static uint3 IndexToPos(int index, int size)
+        {
+            int y = index / (size * size);
+            int w = index % (size * size);
+            int z = w / size;
+            int x = w % size;
+            return (uint3)new int3(x, y, z);
+        }
+
+        public static int PosToIndex(uint3 position, int size)
+        {
+            return (int)(position.y * size * size + (position.z * size) + position.x);
+        }
+
+        public static uint2 IndexToPos2D(int index, int size)
         {
             return new uint2((uint)(index % size), (uint)(index / size));
         }
 
-        public static int To1DIndex(uint2 pos, int size)
+        public static int PosToIndex2D(uint2 position, int size)
         {
-            return (int)(pos.x + pos.y * size);
-        }
-
-        // --- Skirt 相关函数 ---
-        public static uint3 UnflattenFromFaceRelative(uint2 relative, int dir, uint missing = 0)
-        {
-            if (dir == 0) return new uint3(missing, relative.x, relative.y);
-            if (dir == 1) return new uint3(relative.x, missing, relative.y);
-            return new uint3(relative.x, relative.y, missing);
+            return (int)(position.x + position.y * size);
         }
 
         public static int3 UnflattenFromFaceRelative(int2 relative, int dir, int missing = 0)
@@ -83,12 +92,50 @@ namespace OptIn.Voxel
             return new int3(relative.x, relative.y, missing);
         }
 
+        public static uint3 UnflattenFromFaceRelative(uint2 relative, int dir, uint missing = 0)
+        {
+            if (dir == 0) return new uint3(missing, relative.x, relative.y);
+            if (dir == 1) return new uint3(relative.x, missing, relative.y);
+            return new uint3(relative.x, relative.y, missing);
+        }
+
+        // [新增] 修复编译错误 CS1503 所需的 float2 重载方法
+        public static float3 UnflattenFromFaceRelative(float2 relative, int dir, float missing = 0)
+        {
+            if (dir == 0) return new float3(missing, relative.x, relative.y);
+            if (dir == 1) return new float3(relative.x, missing, relative.y);
+            return new float3(relative.x, relative.y, missing);
+        }
+
         public static int2 FlattenToFaceRelative(int3 position, int dir)
         {
             if (dir == 0) return position.yz;
             if (dir == 1) return position.xz;
             return position.xy;
         }
+
+        // --- Dual Contouring Constants ---
+        public static readonly int3[] DC_VERT =
+        {
+            new int3(0, 0, 0), new int3(1, 0, 0), new int3(1, 1, 0), new int3(0, 1, 0),
+            new int3(0, 0, 1), new int3(1, 0, 1), new int3(1, 1, 1), new int3(0, 1, 1)
+        };
+
+        public static readonly int[,] DC_EDGE =
+        {
+            {0, 1}, {1, 2}, {2, 3}, {3, 0},
+            {4, 5}, {5, 6}, {6, 7}, {7, 4},
+            {0, 4}, {1, 5}, {2, 6}, {3, 7}
+        };
+
+        public static readonly int3[] DC_AXES = { new int3(1, 0, 0), new int3(0, 1, 0), new int3(0, 0, 1) };
+
+        public static readonly int3[,] DC_ADJACENT =
+        {
+            { new int3(0, 0, 0), new int3(0, 0, -1), new int3(0, -1, -1), new int3(0, -1, 0) },
+            { new int3(0, 0, 0), new int3(-1, 0, 0), new int3(-1, 0, -1), new int3(0, 0, -1) },
+            { new int3(0, 0, 0), new int3(0, -1, 0), new int3(-1, -1, 0), new int3(-1, 0, 0) }
+        };
 
         // --- Block Meshing Constants ---
         public static readonly int[] DirectionAlignedX = { 2, 2, 0, 0, 0, 0 };
@@ -115,30 +162,6 @@ namespace OptIn.Voxel
             new float2(0f, 0f), new float2(1f, 0f), new float2(1f, 1f), new float2(0f, 1f)
         };
 
-        // --- Dual Contouring Constants ---
-        public static readonly int3[] DC_VERT =
-        {
-            new int3(0, 0, 0), new int3(1, 0, 0), new int3(1, 1, 0), new int3(0, 1, 0),
-            new int3(0, 0, 1), new int3(1, 0, 1), new int3(1, 1, 1), new int3(0, 1, 1)
-        };
-
-        public static readonly int[,] DC_EDGE =
-        {
-            {0, 1}, {1, 2}, {2, 3}, {3, 0},
-            {4, 5}, {5, 6}, {6, 7}, {7, 4},
-            {0, 4}, {1, 5}, {2, 6}, {3, 7}
-        };
-
-        public static readonly int3[] DC_AXES = { new int3(1, 0, 0), new int3(0, 1, 0), new int3(0, 0, 1) };
-
-        public static readonly int3[,] DC_ADJACENT =
-        {
-            { new int3(0, 0, 0), new int3(0, 0, -1), new int3(0, -1, -1), new int3(0, -1, 0) },
-            { new int3(0, 0, 0), new int3(-1, 0, 0), new int3(-1, 0, -1), new int3(0, 0, -1) },
-            { new int3(0, 0, 0), new int3(0, -1, 0), new int3(-1, -1, 0), new int3(-1, 0, 0) }
-        };
-
-        // --- General Direction Constants ---
         public static readonly int3[] VoxelDirectionOffsets =
         {
             new int3(1, 0, 0), new int3(-1, 0, 0), new int3(0, 1, 0),

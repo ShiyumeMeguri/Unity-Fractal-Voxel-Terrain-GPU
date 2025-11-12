@@ -26,7 +26,7 @@ public struct TerrainSkirtLinkedParent : IComponentData
     public Entity ChunkParent;
 }
 
-public struct ChunkVoxelData : IComponentData, IEnableableComponent, IDisposable
+public struct TerrainChunkVoxels : IComponentData, IEnableableComponent, IDisposable
 {
     public NativeArray<VoxelData> Voxels;
     public JobHandle AsyncWriteJobHandle;
@@ -34,7 +34,7 @@ public struct ChunkVoxelData : IComponentData, IEnableableComponent, IDisposable
 
     public bool IsCreated => Voxels.IsCreated;
 
-    public ChunkVoxelData(int3 paddedSize, Allocator allocator)
+    public TerrainChunkVoxels(int3 paddedSize, Allocator allocator)
     {
         int count = paddedSize.x * paddedSize.y * paddedSize.z;
         Voxels = new NativeArray<VoxelData>(count, allocator, NativeArrayOptions.UninitializedMemory);

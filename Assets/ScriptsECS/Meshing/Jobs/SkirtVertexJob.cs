@@ -1,56 +1,32 @@
+// Assets/ScriptsECS/Meshing/Jobs/SkirtVertexJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using OptIn.Voxel;
 
 namespace OptIn.Voxel.Meshing
 {
     [BurstCompile(CompileSynchronously = true)]
     public struct SkirtVertexJob : IJobParallelFor
     {
-        [ReadOnly]
-        public VoxelData voxels;
-        [ReadOnly]
-        public NativeArray<float3> voxelNormals;
-        [ReadOnly]
-        public NativeArray<bool> withinThreshold;
+        [ReadOnly] public NativeArray<VoxelData> Voxels;
+        [ReadOnly] public NativeArray<float3> voxelNormals;
+        [ReadOnly] public NativeArray<bool> WithinThreshold;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> SkirtVertexIndicesGenerated;
+        [WriteOnly, NativeDisableParallelForRestriction] public Vertices SkirtVertices;
+        public NativeCounter.Concurrent SkirtVertexCounter;
+        [ReadOnly] public NativeCounter VertexCounter;
+        [ReadOnly] public int3 PaddedChunkSize;
 
-        [WriteOnly]
-        [NativeDisableParallelForRestriction]
-        public NativeArray<int> skirtVertexIndicesGenerated;
+        public static readonly uint2[] EDGE_POSITIONS_0_CUSTOM = { new uint2(0, 0), new uint2(0, 1), new uint2(1, 1), new uint2(1, 0) };
+        public static readonly uint2[] EDGE_POSITIONS_1_CUSTOM = { new uint2(0, 1), new uint2(1, 1), new uint2(1, 0), new uint2(0, 0) };
 
-        [WriteOnly]
-        [NativeDisableParallelForRestriction]
-        public Vertices skirtVertices;
-
-        public NativeCounter.Concurrent skirtVertexCounter;
-
-        [ReadOnly]
-        public NativeCounter vertexCounter;
-
-        public static readonly uint2[] EDGE_POSITIONS_0_CUSTOM = new uint2[] {
-            new uint2(0, 0),
-            new uint2(0, 1),
-            new uint2(1, 1),
-            new uint2(1, 0),
-        };
-
-        public static readonly uint2[] EDGE_POSITIONS_1_CUSTOM = new uint2[] {
-            new uint2(0, 1),
-            new uint2(1, 1),
-            new uint2(1, 0),
-            new uint2(0, 0),
-        };
-
-        struct VertexToSpawn
+        private struct VertexToSpawn
         {
             public Vertices.Single inner;
             public bool shouldSpawn;
-
             public bool useWorldPosition;
             public float3 worldPosition;
-            public bool forced;
         }
 
         public void Execute(int index)
@@ -58,174 +34,107 @@ namespace OptIn.Voxel.Meshing
             int face = index / VoxelUtils.SKIRT_FACE;
             int direction = face % 3;
             bool negative = face < 3;
-            uint missing = negative ? 0 : ((uint)VoxelUtils.SIZE - 3);
+            uint missing = negative ? 0u : (uint)PaddedChunkSize.x - 3;
             int localIndex = index % VoxelUtils.SKIRT_FACE;
-            int indexIndex = localIndex + face * VoxelUtils.SKIRT_FACE;
 
-            // hold up I'm resetted
-            skirtVertexIndicesGenerated[indexIndex] = int.MaxValue;
+            SkirtVertexIndicesGenerated[index] = int.MaxValue;
 
             uint2 flatten = VoxelUtils.IndexToPos2D(localIndex, VoxelUtils.SKIRT_SIZE);
             uint3 unoffsetted = SkirtUtils.UnflattenFromFaceRelative(flatten, direction, missing);
 
-            // vertex that we will spawn for this iteration!!!
-            VertexToSpawn vertex = default;
-
-            // mask to check if we're dealing with an edge case or corner case
-            bool4 minMaxMask = new bool4(false);
-            minMaxMask.x = flatten.x == 0;
-            minMaxMask.y = flatten.y == 0;
-            minMaxMask.z = flatten.x == (VoxelUtils.SKIRT_SIZE - 1);
-            minMaxMask.w = flatten.y == (VoxelUtils.SKIRT_SIZE - 1);
-
+            bool4 minMaxMask = new bool4(flatten.x == 0, flatten.y == 0, flatten.x == (VoxelUtils.SKIRT_SIZE - 1), flatten.y == (VoxelUtils.SKIRT_SIZE - 1));
             int count = BitUtils.CountTrue(minMaxMask);
-            // if corner case, then only 2 of the above are true
-            // if edge case, then only 1 of the above is true
 
+            VertexToSpawn vertex;
             if (count == 2)
             {
-                // corner case!!!!
                 vertex = CreateCorner(direction, negative, flatten);
             }
             else if (count == 1)
             {
-                // edge case!!!
                 vertex = CreateSurfaceNets1D(flatten, minMaxMask, negative, face);
             }
             else
             {
-                // normal face case!!!
                 uint3 position = SkirtUtils.UnflattenFromFaceRelative(flatten - 1, direction, missing);
                 vertex = CreateSurfaceNets2D(face, negative, position);
             }
 
-            // Actually spawn the vertex if needed
             if (vertex.shouldSpawn)
             {
-                int vertexIndex = skirtVertexCounter.Increment();
-
-                if (vertex.useWorldPosition)
-                {
-                    vertex.inner.position = (vertex.worldPosition + vertex.inner.position);
-                }
-                else
-                {
-                    vertex.inner.position = ((float3)unoffsetted + vertex.inner.position);
-                }
-
-                skirtVertices[vertexIndex] = vertex.inner;
-
-                // We want the triangles that utilize these vertex indices to refer to these vertices *after* we have merged them to the original mesh (after the SN vertices)
-                skirtVertexIndicesGenerated[indexIndex] = vertexCounter.Count + vertexIndex;
+                int vertexIndex = SkirtVertexCounter.Increment();
+                vertex.inner.position += vertex.useWorldPosition ? vertex.worldPosition : (float3)unoffsetted;
+                SkirtVertices[vertexIndex] = vertex.inner;
+                SkirtVertexIndicesGenerated[index] = VertexCounter.Count + vertexIndex;
             }
         }
 
         private VertexToSpawn CreateCorner(int direction, bool negative, uint2 flatten)
         {
-            // TODO: fix me. removed it cause of bounds stuff
             return new VertexToSpawn { shouldSpawn = false };
-            /*
-            VertexToSpawn vertex;
-            uint missing2 = negative ? 0 : ((uint)VoxelUtils.SIZE - 2);
-            uint2 flatten2 = math.clamp(flatten, 0, VoxelUtils.SIZE - 2);
-            float3 worldPos = SkirtUtils.UnflattenFromFaceRelative(flatten2, direction, missing2);
-
-            // corner case!!!
-            vertex = new VertexToSpawn {
-                offset = 0f,
-                shouldSpawn = true,
-                worldPosition = worldPos,
-                useWorldPosition = true,
-            };
-            return vertex;
-            */
         }
 
         private VertexToSpawn CreateSurfaceNets2D(int face, bool negative, uint3 position)
         {
             int faceDir = face % 3;
+            uint2 flat = (uint2)VoxelUtils.FlattenToFaceRelative((int3)position, faceDir);
 
             Vertices.Single vertex = new Vertices.Single();
             Vertices.Single forcedVertex = new Vertices.Single();
             bool force = false;
-
-            uint2 flat = SkirtUtils.FlattenToFaceRelative(position, faceDir);
-
             int count = 0;
+
             for (int edge = 0; edge < 4; edge++)
             {
                 uint2 startOffset2D = EDGE_POSITIONS_0_CUSTOM[edge];
                 uint2 endOffset2D = EDGE_POSITIONS_1_CUSTOM[edge];
 
-                uint3 startOffset = SkirtUtils.UnflattenFromFaceRelative(startOffset2D, faceDir, (uint)(negative ? 0 : 1));
-                uint3 endOffset = SkirtUtils.UnflattenFromFaceRelative(endOffset2D, faceDir, (uint)(negative ? 0 : 1));
+                uint3 startOffset = VoxelUtils.UnflattenFromFaceRelative(startOffset2D, faceDir, negative ? 0u : 1u);
+                uint3 endOffset = VoxelUtils.UnflattenFromFaceRelative(endOffset2D, faceDir, negative ? 0u : 1u);
 
-                int startIndex = VoxelUtils.PosToIndex(startOffset + position, VoxelUtils.SIZE);
-                int endIndex = VoxelUtils.PosToIndex(endOffset + position, VoxelUtils.SIZE);
+                int startIndex = VoxelUtils.To1DIndex(startOffset + position, PaddedChunkSize);
+                int endIndex = VoxelUtils.To1DIndex(endOffset + position, PaddedChunkSize);
 
-                float startDensity = voxels.densities[startIndex];
-                float endDensity = voxels.densities[endIndex];
+                int withinThresholdIndex = VoxelUtils.PosToIndex2D(startOffset2D + flat, PaddedChunkSize.x) + face * VoxelUtils.FACE;
+                force |= WithinThreshold[withinThresholdIndex];
 
-
-                uint2 startPosition2D = startOffset2D + flat;
-                uint2 endPosition2D = endOffset2D + flat;
-                int withinThresholdFaceIndex = VoxelUtils.FACE * face;
-                force |= withinThreshold[VoxelUtils.PosToIndex2D(startPosition2D, VoxelUtils.SIZE) + withinThresholdFaceIndex];
-                force |= withinThreshold[VoxelUtils.PosToIndex2D(endPosition2D, VoxelUtils.SIZE) + withinThresholdFaceIndex];
-
-                if (startDensity >= 0 ^ endDensity >= 0)
+                if (Voxels[startIndex].IsSolid != Voxels[endIndex].IsSolid)
                 {
                     count++;
-                    vertex.Add(startOffset, endOffset, startIndex, endIndex, ref voxels, ref voxelNormals);
+                    vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels);
                 }
-
-                forcedVertex.AddLerped(startOffset, endOffset, startIndex, endIndex, 0.5f, ref voxels, ref voxelNormals);
+                forcedVertex.AddLerped((float3)startOffset, (float3)endOffset, startIndex, endIndex, 0.5f, ref Voxels);
             }
-
-
 
             if (count == 0)
             {
                 if (force)
                 {
                     forcedVertex.Finalize(4);
-                    float3 middle2D = SkirtUtils.UnflattenFromFaceRelative(-0.5f, faceDir, negative ? 0 : 1);
-                    forcedVertex.position = middle2D;
-                    return new VertexToSpawn
-                    {
-                        inner = forcedVertex,
-                        shouldSpawn = true,
-                        forced = true,
-                    };
+                    // [修复] 确保调用 float2 重载
+                    forcedVertex.position += VoxelUtils.UnflattenFromFaceRelative(new float2(-0.5f), faceDir, negative ? 0f : 1f);
+                    return new VertexToSpawn { inner = forcedVertex, shouldSpawn = true };
                 }
-                else
-                {
-                    return default;
-                }
+                return default;
             }
-            else
-            {
-                vertex.Finalize(count);
-                vertex.position -= SkirtUtils.UnflattenFromFaceRelative(new uint2(1), faceDir);
 
-                return new VertexToSpawn
-                {
-                    inner = vertex,
-                    shouldSpawn = true,
-                };
-            }
+            vertex.Finalize(count);
+            vertex.position -= (float3)VoxelUtils.UnflattenFromFaceRelative(new uint2(1), faceDir);
+            return new VertexToSpawn { inner = vertex, shouldSpawn = true };
         }
 
         private VertexToSpawn CreateSurfaceNets1D(uint2 flatten, bool4 minMaxMask, bool negative, int face)
         {
             int faceDir = face % 3;
-
             bool2 mask = new bool2(minMaxMask.x || minMaxMask.z, minMaxMask.y || minMaxMask.w);
             int edgeDir = SkirtUtils.GetEdgeDirFaceRelative(mask, faceDir);
 
-            uint missing = negative ? 0 : ((uint)VoxelUtils.SIZE - 2);
-            flatten = math.clamp(flatten, 0, VoxelUtils.SIZE - 2);
-            float3 worldPos = SkirtUtils.UnflattenFromFaceRelative(flatten, faceDir, missing);
+            uint missing = negative ? 0u : (uint)PaddedChunkSize.x - 2;
+
+            flatten = math.clamp(flatten, 0u, (uint)(PaddedChunkSize.x - 2));
+
+            // [修复] 显式转换 'missing' 为 float 以匹配正确的重载
+            float3 worldPos = VoxelUtils.UnflattenFromFaceRelative((float2)flatten, faceDir, (float)missing);
 
             Vertices.Single vertex = new Vertices.Single();
             Vertices.Single forcedVertex = new Vertices.Single();
@@ -234,57 +143,36 @@ namespace OptIn.Voxel.Meshing
 
             uint3 endOffset = DirectionOffsetUtils.FORWARD_DIRECTION[edgeDir];
             uint3 unoffsetted = SkirtUtils.UnflattenFromFaceRelative(flatten, faceDir, missing);
-            int startIndex = VoxelUtils.PosToIndex(unoffsetted - endOffset, VoxelUtils.SIZE);
-            int endIndex = VoxelUtils.PosToIndex(unoffsetted, VoxelUtils.SIZE);
 
-            float startDensity = voxels.densities[startIndex];
-            float endDensity = voxels.densities[endIndex];
+            int startIndex = VoxelUtils.To1DIndex(unoffsetted - endOffset, PaddedChunkSize);
+            int endIndex = VoxelUtils.To1DIndex(unoffsetted, PaddedChunkSize);
 
-            uint2 startPosition2D = flatten - SkirtUtils.FlattenToFaceRelative(endOffset, faceDir);
-            uint2 endPosition2D = flatten;
-            int withinThresholdFaceIndex = VoxelUtils.FACE * face;
-            force |= withinThreshold[VoxelUtils.PosToIndex2D(startPosition2D, VoxelUtils.SIZE) + withinThresholdFaceIndex];
-            force |= withinThreshold[VoxelUtils.PosToIndex2D(endPosition2D, VoxelUtils.SIZE) + withinThresholdFaceIndex];
+            int2 startPos2D = VoxelUtils.FlattenToFaceRelative((int3)(unoffsetted - endOffset), faceDir);
 
-            if (startDensity >= 0 ^ endDensity >= 0)
+            force |= WithinThreshold[VoxelUtils.PosToIndex2D((uint2)startPos2D, PaddedChunkSize.x) + face * VoxelUtils.FACE];
+            force |= WithinThreshold[VoxelUtils.PosToIndex2D(flatten, PaddedChunkSize.x) + face * VoxelUtils.FACE];
+
+            if (Voxels[startIndex].IsSolid != Voxels[endIndex].IsSolid)
             {
                 spawn = true;
-                vertex.Add(-(float3)(endOffset), 0, startIndex, endIndex, ref voxels, ref voxelNormals);
+                vertex.Add(-(float3)endOffset, float3.zero, startIndex, endIndex, ref Voxels);
             }
-
-            forcedVertex.AddLerped(-(float3)(endOffset), 0, startIndex, endIndex, 0.5f, ref voxels, ref voxelNormals);
+            forcedVertex.AddLerped(-(float3)endOffset, float3.zero, startIndex, endIndex, 0.5f, ref Voxels);
 
             if (spawn)
             {
                 vertex.Finalize(1);
-                return new VertexToSpawn
-                {
-                    inner = vertex,
-                    worldPosition = worldPos,
-                    shouldSpawn = spawn,
-                    useWorldPosition = true,
-                    forced = false,
-                };
+                return new VertexToSpawn { inner = vertex, worldPosition = worldPos, shouldSpawn = true, useWorldPosition = true };
             }
-            else
+
+            if (force)
             {
-                if (force)
-                {
-                    forcedVertex.Finalize(1);
-                    forcedVertex.position = -(float3)(endOffset) * 0.5f;
-                    return new VertexToSpawn
-                    {
-                        worldPosition = worldPos,
-                        inner = forcedVertex,
-                        shouldSpawn = true,
-                        useWorldPosition = true,
-                    };
-                }
-                else
-                {
-                    return default;
-                }
+                forcedVertex.Finalize(1);
+                forcedVertex.position += -(float3)endOffset * 0.5f;
+                return new VertexToSpawn { worldPosition = worldPos, inner = forcedVertex, shouldSpawn = true, useWorldPosition = true };
             }
+
+            return default;
         }
     }
 }

@@ -1,6 +1,4 @@
-// Assets/ScriptsECS/Meshing/SkirtHandler.cs
-
-using Unity.Burst;
+// Assets/ScriptsECS/Meshing/Handlers/SkirtHandler.cs
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -23,25 +21,28 @@ namespace OptIn.Voxel.Meshing
         public NativeMultiCounter ForcedTriangleCounter;
 
         public JobHandle JobHandle;
-        private int3 m_PaddedChunkSize; // 新增字段
+        private int3 m_PaddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            m_PaddedChunkSize = config.PaddedChunkSize; // 存储尺寸
+            m_PaddedChunkSize = config.PaddedChunkSize;
+            int faceArea = m_PaddedChunkSize.x * m_PaddedChunkSize.y;
+            int skirtFaceArea = faceArea;
 
-            WithinThreshold = new NativeArray<bool>(FACE * 6, Allocator.Persistent);
-            CopiedVertexIndices = new NativeArray<int>(FACE * 6, Allocator.Persistent);
-            GeneratedVertexIndices = new NativeArray<int>(SKIRT_FACE * 6, Allocator.Persistent);
-            StitchedIndices = new NativeArray<int>(SKIRT_FACE * 2 * 6 * 6, Allocator.Persistent);
-            ForcedPerFaceIndices = new NativeArray<int>(SKIRT_FACE * 6 * 6, Allocator.Persistent);
+            WithinThreshold = new NativeArray<bool>(faceArea * 6, Allocator.Persistent);
+            CopiedVertexIndices = new NativeArray<int>(faceArea * 6, Allocator.Persistent);
+            GeneratedVertexIndices = new NativeArray<int>(skirtFaceArea * 6, Allocator.Persistent);
+            StitchedIndices = new NativeArray<int>(skirtFaceArea * 2 * 6 * 6, Allocator.Persistent);
+            ForcedPerFaceIndices = new NativeArray<int>(skirtFaceArea * 6 * 6, Allocator.Persistent);
 
-            SkirtVertices = new Vertices(SKIRT_FACE * 6, Allocator.Persistent);
+            SkirtVertices = new Vertices(skirtFaceArea * 6, Allocator.Persistent);
             VertexCounter = new NativeCounter(Allocator.Persistent);
             StitchedTriangleCounter = new NativeCounter(Allocator.Persistent);
             ForcedTriangleCounter = new NativeMultiCounter(6, Allocator.Persistent);
         }
 
-        public void Schedule(ref ChunkVoxelData voxels, ref CoreMeshHandler core, JobHandle dependency)
+        // [修复] 接收CoreMeshHandler和NormalsHandler
+        public void Schedule(ref TerrainChunkVoxels voxels, ref CoreMeshHandler core, ref NormalsHandler normals, JobHandle dependency)
         {
             VertexCounter.Count = 0;
             StitchedTriangleCounter.Count = 0;
@@ -51,7 +52,7 @@ namespace OptIn.Voxel.Meshing
             {
                 Voxels = voxels.Voxels,
                 WithinThreshold = WithinThreshold,
-                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
+                PaddedChunkSize = m_PaddedChunkSize
             };
             var closestHandle = closestSurfaceJob.Schedule(FACE * 6, 64, dependency);
 
@@ -59,7 +60,7 @@ namespace OptIn.Voxel.Meshing
             {
                 SourceVertexIndices = core.MeshData.vertexIndices,
                 SkirtVertexIndicesCopied = CopiedVertexIndices,
-                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
+                PaddedChunkSize = m_PaddedChunkSize
             };
             var copyHandle = copyJob.Schedule(core.JobHandle);
 
@@ -71,7 +72,8 @@ namespace OptIn.Voxel.Meshing
                 SkirtVertices = SkirtVertices,
                 SkirtVertexCounter = VertexCounter.ToConcurrent(),
                 VertexCounter = core.MeshData.counter,
-                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
+                PaddedChunkSize = m_PaddedChunkSize,
+                voxelNormals = normals.VoxelNormals // [修复] 传递法线数据
             };
             var vertexHandle = vertexJob.Schedule(SKIRT_FACE * 6, 64, JobHandle.CombineDependencies(copyHandle, closestHandle));
 
@@ -84,7 +86,7 @@ namespace OptIn.Voxel.Meshing
                 SkirtForcedPerFaceIndices = ForcedPerFaceIndices,
                 SkirtStitchedTriangleCounter = StitchedTriangleCounter.ToConcurrent(),
                 SkirtForcedTriangleCounter = ForcedTriangleCounter.ToConcurrent(),
-                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
+                PaddedChunkSize = m_PaddedChunkSize
             };
             JobHandle = quadJob.Schedule(FACE * 6, 64, vertexHandle);
         }
@@ -92,14 +94,14 @@ namespace OptIn.Voxel.Meshing
         public void Dispose()
         {
             JobHandle.Complete();
-            WithinThreshold.Dispose();
-            CopiedVertexIndices.Dispose();
-            GeneratedVertexIndices.Dispose();
-            StitchedIndices.Dispose();
-            ForcedPerFaceIndices.Dispose();
+            if (WithinThreshold.IsCreated) WithinThreshold.Dispose();
+            if (CopiedVertexIndices.IsCreated) CopiedVertexIndices.Dispose();
+            if (GeneratedVertexIndices.IsCreated) GeneratedVertexIndices.Dispose();
+            if (StitchedIndices.IsCreated) StitchedIndices.Dispose();
+            if (ForcedPerFaceIndices.IsCreated) ForcedPerFaceIndices.Dispose();
             SkirtVertices.Dispose();
-            VertexCounter.Dispose();
-            StitchedTriangleCounter.Dispose();
+            if (VertexCounter.IsCreated) VertexCounter.Dispose();
+            if (StitchedTriangleCounter.IsCreated) StitchedTriangleCounter.Dispose();
             ForcedTriangleCounter.Dispose();
         }
     }

@@ -1,3 +1,4 @@
+// Assets/ScriptsECS/Meshing/MeshJobHandler.cs
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -15,7 +16,7 @@ namespace OptIn.Voxel.Meshing
             public int VertexCount;
             public int MainMeshIndexCount;
             public int[] ForcedSkirtFacesTriCount;
-            public Vertices Vertices; // This is a struct of NativeArrays
+            public Vertices Vertices;
             public NativeArray<int> MainMeshIndices;
         }
 
@@ -23,6 +24,7 @@ namespace OptIn.Voxel.Meshing
         private SkirtHandler m_Skirt;
         private MergeMeshHandler m_Merger;
         private ApplyMeshHandler m_Apply;
+        private NormalsHandler m_Normals;
 
         private JobHandle m_JobHandle;
         private Entity m_Entity;
@@ -33,6 +35,7 @@ namespace OptIn.Voxel.Meshing
             m_Skirt = new SkirtHandler();
             m_Merger = new MergeMeshHandler();
             m_Apply = new ApplyMeshHandler();
+            m_Normals = new NormalsHandler();
         }
 
         public void Init(TerrainConfig config)
@@ -41,22 +44,35 @@ namespace OptIn.Voxel.Meshing
             m_Skirt.Init(config);
             m_Merger.Init(config);
             m_Apply.Init(config);
+            m_Normals.Init(config);
         }
 
         public bool IsFree { get; private set; } = true;
 
         public bool IsComplete(EntityManager manager) => m_JobHandle.IsCompleted && !IsFree && manager.Exists(m_Entity);
 
-        public void BeginJob(Entity entity, ref ChunkVoxelData chunkVoxels, EntityManager mgr, JobHandle dependency)
+        public void BeginJob(Entity entity, ref TerrainChunkVoxels chunkVoxels, EntityManager mgr, JobHandle dependency)
         {
             IsFree = false;
             m_Entity = entity;
 
-            JobHandle combinedDep = JobHandle.CombineDependencies(dependency, chunkVoxels.AsyncReadJobHandle, chunkVoxels.AsyncWriteJobHandle);
+            var deps = new NativeArray<JobHandle>(4, Allocator.Temp);
+            deps[0] = dependency;
+            deps[1] = m_JobHandle;
+            deps[2] = chunkVoxels.AsyncReadJobHandle;
+            deps[3] = chunkVoxels.AsyncWriteJobHandle;
+            JobHandle currentHandle = JobHandle.CombineDependencies(deps);
+            deps.Dispose();
 
-            m_Core.Schedule(ref chunkVoxels, combinedDep);
-            m_Skirt.Schedule(ref chunkVoxels, ref m_Core, combinedDep);
+            m_Normals.Schedule(ref chunkVoxels, currentHandle);
+            currentHandle = m_Normals.JobHandle;
+
+            m_Core.Schedule(ref chunkVoxels, ref m_Normals, currentHandle);
+
+            m_Skirt.Schedule(ref chunkVoxels, ref m_Core, ref m_Normals, m_Core.JobHandle);
+
             m_Merger.Schedule(ref m_Core, ref m_Skirt);
+
             m_Apply.Schedule(ref m_Merger);
 
             m_JobHandle = m_Apply.JobHandle;
@@ -79,11 +95,7 @@ namespace OptIn.Voxel.Meshing
 
             outStats = new Stats
             {
-                Bounds = new Bounds
-                {
-                    min = m_Apply.Bounds.Value.Min,
-                    max = m_Apply.Bounds.Value.Max
-                },
+                Bounds = new Bounds { min = m_Apply.Bounds.Value.Min, max = m_Apply.Bounds.Value.Max },
                 VertexCount = m_Merger.TotalVertexCount.Value,
                 MainMeshIndexCount = m_Merger.SubmeshIndexCounts[0],
                 ForcedSkirtFacesTriCount = m_Skirt.ForcedTriangleCounter.ToArray(),
@@ -94,15 +106,12 @@ namespace OptIn.Voxel.Meshing
 
             if (isEmpty)
             {
+                // [修复] Mesh.MeshDataArray 没有 IsCreated 属性，直接 Dispose
                 m_Apply.MeshDataArray.Dispose();
             }
             else
             {
-                outMesh = new Mesh
-                {
-                    name = "VoxelChunkMesh",
-                    indexFormat = IndexFormat.UInt32
-                };
+                outMesh = new Mesh { name = "VoxelChunkMesh", indexFormat = IndexFormat.UInt32 };
                 Mesh.ApplyAndDisposeWritableMeshData(m_Apply.MeshDataArray, outMesh, MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
             }
 
@@ -116,6 +125,7 @@ namespace OptIn.Voxel.Meshing
             m_Skirt.Dispose();
             m_Merger.Dispose();
             m_Apply.Dispose();
+            m_Normals.Dispose();
         }
     }
 }

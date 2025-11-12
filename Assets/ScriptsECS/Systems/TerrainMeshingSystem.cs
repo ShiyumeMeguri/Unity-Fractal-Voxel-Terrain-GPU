@@ -55,7 +55,7 @@ public partial class TerrainMeshingSystem : SystemBase
         var query = GetEntityQuery(
             ComponentType.ReadOnly<TerrainChunkRequestMeshingTag>(),
             ComponentType.ReadOnly<TerrainChunkVoxelsReadyTag>(),
-            ComponentType.ReadWrite<ChunkVoxelData>(),
+            ComponentType.ReadWrite<TerrainChunkVoxels>(),
             ComponentType.ReadOnly<Chunk>()
             );
         if (query.IsEmpty) return;
@@ -70,7 +70,7 @@ public partial class TerrainMeshingSystem : SystemBase
             var handler = freeHandlers[i];
             var entity = entities[i];
 
-            ref var voxels = ref SystemAPI.GetComponentRW<ChunkVoxelData>(entity).ValueRW;
+            ref var voxels = ref SystemAPI.GetComponentRW<TerrainChunkVoxels>(entity).ValueRW;
             handler.BeginJob(entity, ref voxels, EntityManager, Dependency);
 
             SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, false);
