@@ -1,5 +1,4 @@
 ﻿using OptIn.Voxel;
-using System;
 using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
@@ -18,7 +17,8 @@ public partial class TerrainReadbackSystem : SystemBase
     {
         Idle,
         AwaitingDispatch,
-        AwaitingReadback
+        AwaitingReadbackData,
+        ProcessingCompletedReadback
     }
 
     private State m_State;
@@ -26,8 +26,12 @@ public partial class TerrainReadbackSystem : SystemBase
     private JobHandle m_PendingCopies;
     private ComputeBuffer m_VoxelBuffer;
     private NativeArray<Voxel> m_ReadbackData;
+    private NativeArray<int> m_SignCounters;
     private bool m_IsInitialized;
     private AsyncGPUReadbackRequest m_ReadbackRequest;
+    private bool m_VoxelsFetched;
+    private bool m_CountersFetched;
+
 
     private const int BATCH_SIZE = 8;
 
@@ -51,6 +55,7 @@ public partial class TerrainReadbackSystem : SystemBase
         {
             m_VoxelBuffer = new ComputeBuffer(totalVoxels, UnsafeUtility.SizeOf<Voxel>(), ComputeBufferType.Structured);
             m_ReadbackData = new NativeArray<Voxel>(totalVoxels, Allocator.Persistent);
+            m_SignCounters = new NativeArray<int>(BATCH_SIZE, Allocator.Persistent);
         }
         else
         {
@@ -64,17 +69,18 @@ public partial class TerrainReadbackSystem : SystemBase
         m_PendingCopies.Complete();
         AsyncGPUReadback.WaitAllRequests();
         if (m_ReadbackData.IsCreated) m_ReadbackData.Dispose();
+        if (m_SignCounters.IsCreated) m_SignCounters.Dispose();
         m_VoxelBuffer?.Release();
     }
 
-    // [修复] 重新添加 ResetState 方法
     private void ResetState()
     {
         m_State = State.Idle;
         m_Entities.Clear();
         m_PendingCopies = default;
+        m_VoxelsFetched = false;
+        m_CountersFetched = false;
     }
-
 
     protected override void OnUpdate()
     {
@@ -87,16 +93,25 @@ public partial class TerrainReadbackSystem : SystemBase
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.ReadbackSystemReady = (m_State == State.Idle);
 
+        // 确保上一个Job链完成
+        if (m_State != State.ProcessingCompletedReadback)
+        {
+            Dependency.Complete();
+        }
+
         switch (m_State)
         {
             case State.Idle:
                 TryBeginReadback();
                 break;
             case State.AwaitingDispatch:
-                m_State = State.AwaitingReadback;
+                m_State = State.AwaitingReadbackData;
                 break;
-            case State.AwaitingReadback:
+            case State.AwaitingReadbackData:
                 TryCheckAndProcessReadback();
+                break;
+            case State.ProcessingCompletedReadback:
+                ProcessCompletedJobs();
                 break;
         }
     }
@@ -155,36 +170,45 @@ public partial class TerrainReadbackSystem : SystemBase
         Graphics.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
 
-        m_ReadbackRequest = AsyncGPUReadback.Request(m_VoxelBuffer);
+        m_ReadbackRequest = AsyncGPUReadback.Request(m_VoxelBuffer, OnVoxelDataReady);
+    }
+
+    // 回调只负责复制数据和设置标志
+    private void OnVoxelDataReady(AsyncGPUReadbackRequest request)
+    {
+        if (m_State != State.AwaitingReadbackData) return;
+
+        if (request.hasError)
+        {
+            Debug.LogError("GPU Readback Error.");
+            m_VoxelsFetched = true; // 即使出错也要推进状态机
+            return;
+        }
+
+        request.GetData<Voxel>().CopyTo(m_ReadbackData);
+        m_VoxelsFetched = true;
     }
 
     private void TryCheckAndProcessReadback()
     {
-        if (!m_ReadbackRequest.done) return;
-
-        if (m_ReadbackRequest.hasError)
-        {
-            Debug.LogError("GPU Readback Error.");
-            ResetState();
-            return;
-        }
-
-        m_ReadbackRequest.GetData<Voxel>().CopyTo(m_ReadbackData);
+        if (!m_VoxelsFetched) return;
 
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
-        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(World.Unmanaged);
         var jobHandles = new NativeArray<JobHandle>(m_Entities.Count, Allocator.Temp);
 
         for (int i = 0; i < m_Entities.Count; i++)
         {
             Entity entity = m_Entities[i];
-            if (!SystemAPI.Exists(entity)) continue;
+            if (!SystemAPI.Exists(entity))
+            {
+                jobHandles[i] = Dependency;
+                continue;
+            }
 
             var chunkData = new ChunkVoxelData(config.PaddedChunkSize, Allocator.Persistent);
-            ecb.AddComponent(entity, chunkData);
-            ecb.SetComponentEnabled<ChunkVoxelData>(entity, true);
+            EntityManager.AddComponentData(entity, chunkData);
 
             var slice = m_ReadbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
             var copyJob = new CopyDataJob { Source = slice, Destination = chunkData.Voxels };
@@ -194,20 +218,49 @@ public partial class TerrainReadbackSystem : SystemBase
             var signCounterJob = new CountSignsJob { Voxels = chunkData.Voxels, Counter = counter };
             var signHandle = signCounterJob.Schedule(copyHandle);
 
-            var finalJob = new PostReadbackJob
-            {
-                Entity = entity,
-                Counter = counter,
-                TotalVoxels = voxelsPerChunk,
-                SkipMeshingIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty,
-                Ecb = ecb.AsParallelWriter()
-            };
-            jobHandles[i] = finalJob.Schedule(signHandle);
+            var finalCopyHandle = new FinalizeReadbackJob { CounterSource = counter, CounterDest = m_SignCounters.GetSubArray(i, 1) }.Schedule(signHandle);
+
+            jobHandles[i] = finalCopyHandle;
         }
 
         m_PendingCopies = JobHandle.CombineDependencies(jobHandles);
-        Dependency = m_PendingCopies;
         jobHandles.Dispose();
+
+        m_State = State.ProcessingCompletedReadback;
+    }
+
+    private void ProcessCompletedJobs()
+    {
+        if (!m_PendingCopies.IsCompleted) return;
+        m_PendingCopies.Complete();
+
+        var config = SystemAPI.GetSingleton<TerrainConfig>();
+        int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
+
+        for (int i = 0; i < m_Entities.Count; i++)
+        {
+            Entity entity = m_Entities[i];
+            if (!SystemAPI.Exists(entity)) continue;
+
+            bool isEmpty = math.abs(m_SignCounters[i]) == voxelsPerChunk;
+
+            SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
+
+            var skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty;
+
+            if (isEmpty && skipIfEmpty)
+            {
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
+                SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+                var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
+                chunkVoxelData.Dispose();
+                SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
+            }
+            else
+            {
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
+            }
+        }
 
         ResetState();
     }
@@ -224,7 +277,7 @@ public partial class TerrainReadbackSystem : SystemBase
     private struct CountSignsJob : IJob
     {
         [ReadOnly] public NativeArray<Voxel> Voxels;
-        public NativeArray<int> Counter;
+        [WriteOnly] public NativeArray<int> Counter;
         public void Execute()
         {
             int signSum = 0;
@@ -237,30 +290,13 @@ public partial class TerrainReadbackSystem : SystemBase
     }
 
     [BurstCompile]
-    private partial struct PostReadbackJob : IJob
+    private struct FinalizeReadbackJob : IJob
     {
-        public Entity Entity;
-        [ReadOnly, DeallocateOnJobCompletion] public NativeArray<int> Counter;
-        public int TotalVoxels;
-        public bool SkipMeshingIfEmpty;
-        public EntityCommandBuffer.ParallelWriter Ecb;
-
+        [ReadOnly, DeallocateOnJobCompletion] public NativeArray<int> CounterSource;
+        [WriteOnly] public NativeSlice<int> CounterDest;
         public void Execute()
         {
-            bool isEmpty = math.abs(Counter[0]) == TotalVoxels;
-            int sortKey = Entity.Index;
-
-            Ecb.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(sortKey, Entity, true);
-            if (isEmpty && SkipMeshingIfEmpty)
-            {
-                Ecb.SetComponentEnabled<TerrainChunkRequestMeshingTag>(sortKey, Entity, false);
-                Ecb.SetComponentEnabled<TerrainChunkEndOfPipeTag>(sortKey, Entity, true);
-                Ecb.SetComponentEnabled<ChunkVoxelData>(sortKey, Entity, false);
-            }
-            else
-            {
-                Ecb.SetComponentEnabled<TerrainChunkRequestMeshingTag>(sortKey, Entity, true);
-            }
+            CounterDest[0] = CounterSource[0];
         }
     }
 }
