@@ -26,49 +26,47 @@ public struct TerrainSkirtLinkedParent : IComponentData
     public Entity ChunkParent;
 }
 
-public struct TerrainChunkVoxels : IComponentData, IEnableableComponent, IDisposable
+public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
 {
     public NativeArray<VoxelData> Voxels;
     public JobHandle AsyncWriteJobHandle;
     public JobHandle AsyncReadJobHandle;
+    public bool MeshingInProgress;
 
     public bool IsCreated => Voxels.IsCreated;
 
-    public TerrainChunkVoxels(int3 paddedSize, Allocator allocator)
+    public void Dispose(JobHandle dependency)
     {
-        int count = paddedSize.x * paddedSize.y * paddedSize.z;
-        Voxels = new NativeArray<VoxelData>(count, allocator, NativeArrayOptions.UninitializedMemory);
-        AsyncWriteJobHandle = default;
-        AsyncReadJobHandle = default;
-    }
-
-    public void Dispose()
-    {
-        if (IsCreated) Voxels.Dispose();
+        if (IsCreated)
+        {
+            var disposeHandle = JobHandle.CombineDependencies(AsyncWriteJobHandle, AsyncReadJobHandle, dependency);
+            Voxels.Dispose(disposeHandle);
+        }
     }
 }
 
-public struct TerrainChunkMesh : IComponentData, IEnableableComponent, IDisposable
+public struct TerrainChunkMesh : IComponentData, IEnableableComponent
 {
     public NativeArray<float3> Vertices;
+    public NativeArray<float3> Normals;
     public NativeArray<int> MainMeshIndices;
     public JobHandle AccessJobHandle;
 
-    public static TerrainChunkMesh FromJobHandler(NativeArray<float3> vertices, NativeArray<int> indices, int vertexCount, int indexCount, JobHandle dependency)
+    public static TerrainChunkMesh FromJobHandlerStats(OptIn.Voxel.Meshing.MeshJobHandler.Stats stats)
     {
-        var newVertices = new NativeArray<float3>(vertexCount, Allocator.Persistent);
-        var newIndices = new NativeArray<int>(indexCount, Allocator.Persistent);
+        var vertices = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
+        var normals = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
+        var indices = new NativeArray<int>(stats.MainMeshIndexCount, Allocator.Persistent);
 
-        var vHandle = new CopyJob<float3> { Source = vertices.GetSubArray(0, vertexCount), Destination = newVertices }.Schedule(dependency);
-        var iHandle = new CopyJob<int> { Source = indices.GetSubArray(0, indexCount), Destination = newIndices }.Schedule(dependency);
-
-        var finalHandle = JobHandle.CombineDependencies(vHandle, iHandle);
+        vertices.CopyFrom(stats.Vertices.positions.GetSubArray(0, stats.VertexCount));
+        normals.CopyFrom(stats.Vertices.normals.GetSubArray(0, stats.VertexCount));
+        indices.CopyFrom(stats.MainMeshIndices.GetSubArray(0, stats.MainMeshIndexCount));
 
         return new TerrainChunkMesh()
         {
-            Vertices = newVertices,
-            MainMeshIndices = newIndices,
-            AccessJobHandle = finalHandle,
+            Vertices = vertices,
+            Normals = normals,
+            MainMeshIndices = indices,
         };
     }
 
@@ -76,15 +74,8 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent, IDisposab
     {
         AccessJobHandle.Complete();
         if (Vertices.IsCreated) Vertices.Dispose();
+        if (Normals.IsCreated) Normals.Dispose();
         if (MainMeshIndices.IsCreated) MainMeshIndices.Dispose();
-    }
-
-    [BurstCompile]
-    private struct CopyJob<T> : IJob where T : struct
-    {
-        [ReadOnly] public NativeArray<T> Source;
-        [WriteOnly] public NativeArray<T> Destination;
-        public void Execute() => Source.CopyTo(Destination);
     }
 }
 

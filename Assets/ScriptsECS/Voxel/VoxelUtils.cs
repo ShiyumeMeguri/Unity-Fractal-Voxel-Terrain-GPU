@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Voxel/VoxelUtils.cs
 using Unity.Mathematics;
 
 namespace OptIn.Voxel
@@ -48,19 +47,6 @@ namespace OptIn.Voxel
                    position.z >= 0 && position.z < chunkSize.z;
         }
 
-        public static bool BoundaryCheck(uint3 position, int3 chunkSize)
-        {
-            return position.x < chunkSize.x &&
-                   position.y < chunkSize.y &&
-                   position.z < chunkSize.z;
-        }
-
-        public static int Floor(float x)
-        {
-            int xi = (int)x;
-            return x < xi ? xi - 1 : xi;
-        }
-
         public static uint3 IndexToPos(int index, int size)
         {
             int y = index / (size * size);
@@ -99,7 +85,6 @@ namespace OptIn.Voxel
             return new uint3(relative.x, relative.y, missing);
         }
 
-        // [新增] 修复编译错误 CS1503 所需的 float2 重载方法
         public static float3 UnflattenFromFaceRelative(float2 relative, int dir, float missing = 0)
         {
             if (dir == 0) return new float3(missing, relative.x, relative.y);

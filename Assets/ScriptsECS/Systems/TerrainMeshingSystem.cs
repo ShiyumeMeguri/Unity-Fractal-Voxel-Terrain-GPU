@@ -1,6 +1,4 @@
-﻿// Assets/ScriptsECS/Systems/TerrainMeshingSystem.cs
-
-using OptIn.Voxel;
+﻿using OptIn.Voxel;
 using OptIn.Voxel.Meshing;
 using System.Collections.Generic;
 using System.Linq;
@@ -42,7 +40,8 @@ public partial class TerrainMeshingSystem : SystemBase
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.MeshingSystemReady = _Handlers.All(h => h.IsFree);
+        // [修正] 使用正确的字段名
+        readySystems.mesher = _Handlers.All(h => h.IsFree);
 
         foreach (var handler in _Handlers)
         {
@@ -92,8 +91,6 @@ public partial class TerrainMeshingSystem : SystemBase
         }
 
         var skirtMaterial = new Material(resources.ChunkMaterial);
-        // You might need a special shader variant for skirts
-        // skirtMaterial.EnableKeyword("_SKIRT_ON"); 
 
         _MainMeshMaterialID = _GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
         _SkirtMeshMaterialID = _GraphicsSystem.RegisterMaterial(skirtMaterial);
@@ -163,13 +160,7 @@ public partial class TerrainMeshingSystem : SystemBase
             }
 
             SystemAPI.SetComponentEnabled<TerrainChunkMesh>(entity, true);
-            SystemAPI.SetComponent(entity, TerrainChunkMesh.FromJobHandler(
-                stats.Vertices.positions, // Pass NativeArray<float3> directly
-                stats.MainMeshIndices,
-                stats.VertexCount,
-                stats.MainMeshIndexCount,
-                Dependency)
-            );
+            SystemAPI.SetComponent(entity, TerrainChunkMesh.FromJobHandlerStats(stats));
 
             SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, true);
         }

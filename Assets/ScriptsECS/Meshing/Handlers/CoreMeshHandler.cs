@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Handlers/CoreMeshHandler.cs
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -16,17 +15,17 @@ namespace OptIn.Voxel.Meshing
             _PaddedChunkSize = config.PaddedChunkSize;
             MeshData = new VoxelMeshBuilder.NativeMeshData(_PaddedChunkSize);
         }
-        
-        // [修复] 接收NormalsHandler并将其法线数据传递下去
+
         public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
+            // [修复] 此处不再需要 `ref`，因为 `chunkVoxels.Voxels` 是一个 `NativeArray`，它本身就是引用类型
             JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(chunkVoxels.Voxels, _PaddedChunkSize, MeshData, normals.VoxelNormals, dependency);
         }
 
         public void Dispose()
         {
             JobHandle.Complete();
-            MeshData.Dispose();
+            if (MeshData != null) MeshData.Dispose();
         }
     }
 }

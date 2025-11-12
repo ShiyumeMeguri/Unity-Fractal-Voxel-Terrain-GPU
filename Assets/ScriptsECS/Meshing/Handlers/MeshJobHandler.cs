@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/MeshJobHandler.cs
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -53,29 +52,44 @@ namespace OptIn.Voxel.Meshing
 
         public void BeginJob(Entity entity, ref TerrainChunkVoxels chunkVoxels, EntityManager mgr, JobHandle dependency)
         {
+            if (!IsFree) return;
+
             IsFree = false;
             _Entity = entity;
 
-            var deps = new NativeArray<JobHandle>(4, Allocator.Temp);
-            deps[0] = dependency;
-            deps[1] = _JobHandle;
-            deps[2] = chunkVoxels.AsyncReadJobHandle;
-            deps[3] = chunkVoxels.AsyncWriteJobHandle;
+            chunkVoxels.MeshingInProgress = true;
+
+            // 组合所有传入的依赖项
+            var deps = new NativeArray<JobHandle>(4, Allocator.Temp)
+            {
+                [0] = dependency,
+                [1] = _JobHandle, // 上一帧可能留下的句柄
+                [2] = chunkVoxels.AsyncReadJobHandle,
+                [3] = chunkVoxels.AsyncWriteJobHandle
+            };
             JobHandle currentHandle = JobHandle.CombineDependencies(deps);
             deps.Dispose();
 
+            // 1. 计算法线
             _Normals.Schedule(ref chunkVoxels, currentHandle);
             currentHandle = _Normals.JobHandle;
 
+            // 2. 生成核心网格
             _Core.Schedule(ref chunkVoxels, ref _Normals, currentHandle);
 
+            // 3. 生成裙边网格 (依赖核心网格和法线)
             _Skirt.Schedule(ref chunkVoxels, ref _Core, ref _Normals, _Core.JobHandle);
 
+            // 4. 合并核心网格和裙边网格
             _Merger.Schedule(ref _Core, ref _Skirt);
 
+            // 5. 准备应用到Unity Mesh
             _Apply.Schedule(ref _Merger);
 
+            // 最终的句柄是Apply步骤的句柄
             _JobHandle = _Apply.JobHandle;
+
+            // 更新体素数据的读取依赖
             chunkVoxels.AsyncReadJobHandle = _JobHandle;
         }
 
@@ -89,8 +103,12 @@ namespace OptIn.Voxel.Meshing
             outStats = default;
 
             if (!mgr.Exists(_Entity)) return false;
-
             outEntity = _Entity;
+
+            var voxels = mgr.GetComponentData<TerrainChunkVoxels>(_Entity);
+            voxels.MeshingInProgress = false;
+            mgr.SetComponentData(_Entity, voxels);
+
             bool isEmpty = _Merger.TotalVertexCount.Value == 0;
 
             outStats = new Stats
@@ -106,7 +124,6 @@ namespace OptIn.Voxel.Meshing
 
             if (isEmpty)
             {
-                // [修复] Mesh.MeshDataArray 没有 IsCreated 属性，直接 Dispose
                 _Apply.MeshDataArray.Dispose();
             }
             else

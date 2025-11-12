@@ -1,5 +1,4 @@
-﻿// Assets/ScriptsECS/Voxel/VoxelMeshBuilder.cs
-using OptIn.Voxel;
+﻿using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -10,10 +9,16 @@ public static class VoxelMeshBuilder
 {
     public static readonly int2 AtlasSize = new int2(8, 8);
 
-    // [修复] 接收预计算的法线数组
     public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize, NativeMeshData meshData, NativeArray<float3> precomputedNormals, JobHandle dependency)
     {
+        if (!meshData.counter.IsCreated)
+        {
+            Debug.LogError("VoxelMeshBuilder: NativeCounter is not created!");
+            return dependency;
+        }
+
         meshData.counter.Count = 0;
+
         var job = new VoxelMeshBuildJob
         {
             voxels = voxels,
@@ -21,16 +26,19 @@ public static class VoxelMeshBuilder
             vertices = meshData.nativeVertices,
             indices = meshData.nativeIndices,
             counter = meshData.counter.ToConcurrent(),
-            gradients = precomputedNormals // 传递法线
+            gradients = precomputedNormals
         };
-        return job.Schedule(dependency);
+
+        var handle = job.Schedule(dependency);
+        JobHandle.ScheduleBatchedJobs();
+        return handle;
     }
 
     public class NativeMeshData : System.IDisposable
     {
         public NativeArray<GPUVertex> nativeVertices;
         public NativeArray<int> nativeIndices;
-        public NativeArray<int> vertexIndices;
+        public NativeArray<int> vertexIndices; // For skirt generation
         public NativeCounter counter;
 
         public NativeMeshData(int3 paddedChunkSize)
@@ -39,9 +47,9 @@ public static class VoxelMeshBuilder
             int maxVertices = numVoxels * 12;
             int maxIndices = maxVertices * 2;
 
-            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
-            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
-            vertexIndices = new NativeArray<int>(numVoxels, Allocator.Persistent);
+            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            vertexIndices = new NativeArray<int>(numVoxels, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             counter = new NativeCounter(Allocator.Persistent);
         }
 
@@ -59,7 +67,7 @@ public static class VoxelMeshBuilder
     {
         [ReadOnly] public NativeArray<VoxelData> voxels;
         [ReadOnly] public int3 chunkSize;
-        [ReadOnly] public NativeArray<float3> gradients; // [修复] 接收法线
+        [ReadOnly] public NativeArray<float3> gradients;
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<GPUVertex> vertices;
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> indices;
         public NativeCounter.Concurrent counter;
@@ -93,7 +101,6 @@ public static class VoxelMeshBuilder
 
         public void Execute()
         {
-            // [修复] 移除内部的法线计算，直接使用传入的gradients
             for (int x = 1; x < chunkSize.x - 1; x++)
                 for (int y = 1; y < chunkSize.y - 1; y++)
                     for (int z = 1; z < chunkSize.z - 1; z++)

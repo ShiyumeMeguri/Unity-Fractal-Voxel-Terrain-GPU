@@ -22,7 +22,7 @@ public partial class TerrainReadbackSystem : SystemBase
     }
 
     private State _State;
-    private List<(Entity Entity, bool SkipMeshingIfEmpty)> _BatchInfo; // [修复] 存储实体和它的Tag数据
+    private List<(Entity Entity, bool SkipMeshingIfEmpty)> _BatchInfo;
     private JobHandle _PendingCopies;
     private ComputeBuffer _VoxelBuffer;
     private NativeArray<VoxelData> _ReadbackData;
@@ -88,7 +88,8 @@ public partial class TerrainReadbackSystem : SystemBase
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.ReadbackSystemReady = (_State == State.Idle);
+        // [修正] 使用正确的字段名
+        readySystems.readback = (_State == State.Idle);
 
         if (_State != State.ProcessingCompletedReadback)
         {
@@ -143,7 +144,9 @@ public partial class TerrainReadbackSystem : SystemBase
             return;
         }
 
-        var threadGroupSize = new int3(8, 8, 8);
+        uint tx, ty, tz;
+        compute.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
+        var threadGroupSize = new int3((int)tx, (int)ty, (int)tz);
         var groups = (paddedChunkSize + threadGroupSize - 1) / threadGroupSize;
 
         cmd.SetComputeBufferParam(compute, kernel, "asyncVoxelBuffer", _VoxelBuffer);
@@ -151,19 +154,14 @@ public partial class TerrainReadbackSystem : SystemBase
         for (int i = 0; i < numToProcess; i++)
         {
             Entity entity = entitiesArray[i];
-
-            // [修复] 在禁用Tag之前读取并缓存数据
             var requestTag = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity);
             _BatchInfo.Add((entity, requestTag.SkipMeshingIfEmpty));
-
             var chunk = SystemAPI.GetComponent<Chunk>(entity);
 
-            int baseIndex = i * voxelsPerChunk;
-            cmd.SetComputeIntParam(compute, "baseIndex", baseIndex);
+            cmd.SetComputeIntParam(compute, "baseIndex", i * voxelsPerChunk);
             cmd.SetComputeIntParams(compute, "chunkPosition", chunk.Position.x, chunk.Position.y, chunk.Position.z);
             cmd.SetComputeIntParams(compute, "chunkSize", paddedChunkSize.x, paddedChunkSize.y, paddedChunkSize.z);
             cmd.DispatchCompute(compute, kernel, groups.x, groups.y, groups.z);
-
             EntityManager.SetComponentEnabled<TerrainChunkRequestReadbackTag>(entity, false);
         }
 
@@ -207,7 +205,10 @@ public partial class TerrainReadbackSystem : SystemBase
                 continue;
             }
 
-            var chunkData = new TerrainChunkVoxels(config.PaddedChunkSize, Allocator.Persistent);
+            var chunkData = new TerrainChunkVoxels
+            {
+                Voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent, NativeArrayOptions.UninitializedMemory)
+            };
             ecb.AddComponent(entity, chunkData);
 
             var slice = _ReadbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
@@ -242,7 +243,7 @@ public partial class TerrainReadbackSystem : SystemBase
             if (!SystemAPI.Exists(entity)) continue;
 
             bool isEmpty = math.abs(_SignCounters[i]) == voxelsPerChunk;
-            bool skipIfEmpty = _BatchInfo[i].SkipMeshingIfEmpty; // [修复] 使用缓存的数据
+            bool skipIfEmpty = _BatchInfo[i].SkipMeshingIfEmpty;
 
             SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
 
@@ -250,11 +251,11 @@ public partial class TerrainReadbackSystem : SystemBase
             {
                 SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
                 SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+
                 if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
                 {
                     var chunkVoxelData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
-                    chunkVoxelData.Dispose();
-                    SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, false);
+                    // 不在此处调用 Dispose()
                 }
             }
             else

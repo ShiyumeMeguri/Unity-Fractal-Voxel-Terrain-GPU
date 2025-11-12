@@ -29,12 +29,10 @@ namespace OptIn.Voxel
             get
             {
                 if (voxelID > 0) return 1f; // Blocks are always "full"
-                // metadata stores density scaled from [-1, 1] to [-32767, 32767]
                 return metadata / 32767f;
             }
             set
             {
-                // Scale float from [-1, 1] to short [-32767, 32767]
                 metadata = (short)(math.clamp(value, -1f, 1f) * 32767f);
             }
         }
@@ -46,7 +44,6 @@ namespace OptIn.Voxel
 
         public ushort GetMaterialID()
         {
-            // Returns a positive ID for texturing, regardless of type.
             return (ushort)Mathf.Abs(voxelID);
         }
     }
