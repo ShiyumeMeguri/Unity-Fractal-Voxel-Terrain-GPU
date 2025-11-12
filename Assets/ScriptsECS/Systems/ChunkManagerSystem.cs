@@ -34,6 +34,7 @@ public partial struct ChunkManagerSystem : ISystem
     {
         var mgr = state.EntityManager;
         m_ChunkPrototype = mgr.CreateEntity();
+        mgr.AddComponent<LocalTransform>(m_ChunkPrototype); // 修复：添加 LocalTransform
         mgr.AddComponent<LocalToWorld>(m_ChunkPrototype);
         mgr.AddComponent<Chunk>(m_ChunkPrototype);
         // Do not add ChunkVoxelData here, it will be added on demand.
@@ -55,6 +56,7 @@ public partial struct ChunkManagerSystem : ISystem
         mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(m_ChunkPrototype, true);
 
         m_SkirtPrototype = mgr.CreateEntity();
+        mgr.AddComponent<LocalTransform>(m_SkirtPrototype); // 修复：添加 LocalTransform
         mgr.AddComponent<LocalToWorld>(m_SkirtPrototype);
         mgr.AddComponent<TerrainSkirt>(m_SkirtPrototype);
         mgr.AddComponent<TerrainDeferredVisible>(m_SkirtPrototype);
