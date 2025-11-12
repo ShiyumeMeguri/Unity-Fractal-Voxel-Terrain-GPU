@@ -91,6 +91,8 @@ public partial class TerrainMeshingSystem : SystemBase
         }
 
         var skirtMaterial = new Material(resources.ChunkMaterial);
+        // 如果你的Shader需要一个特定的关键字来启用裙带渲染，在这里启用它
+        // skirtMaterial.EnableKeyword("_SKIRT"); 
         _MainMeshMaterialID = _GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
         _SkirtMeshMaterialID = _GraphicsSystem.RegisterMaterial(skirtMaterial);
 
@@ -123,6 +125,7 @@ public partial class TerrainMeshingSystem : SystemBase
                 return;
             }
 
+            var resources = SystemAPI.ManagedAPI.GetSingleton<TerrainResources>();
             var meshID = _GraphicsSystem.RegisterMesh(mesh);
 
             var mainMaterialMeshInfo = new MaterialMeshInfo
@@ -132,7 +135,9 @@ public partial class TerrainMeshingSystem : SystemBase
                 SubMesh = 0
             };
 
-            RenderMeshUtility.AddComponents(entity, EntityManager, RenderMeshDescription, mainMaterialMeshInfo);
+            var renderMeshDesc = new RenderMeshDescription(ShadowCastingMode.On, true, MotionVectorGenerationMode.Camera);
+            // [修复] 移除不正确的 MaterialMeshInfo.defaultValue 参数
+            RenderMeshUtility.AddComponents(entity, EntityManager, renderMeshDesc, mainMaterialMeshInfo);
 
             AABB aabb = new AABB { Center = stats.Bounds.center, Extents = stats.Bounds.extents };
             SystemAPI.SetComponent(entity, new RenderBounds { Value = aabb });
@@ -140,6 +145,9 @@ public partial class TerrainMeshingSystem : SystemBase
             var chunkTransform = SystemAPI.GetComponent<LocalToWorld>(entity);
             AABB worldAABB = TransformAABB(chunkTransform.Value, aabb);
             SystemAPI.SetComponent(entity, new WorldRenderBounds { Value = worldAABB });
+
+            var deferredVisibility = SystemAPI.GetComponent<TerrainChunkRequestMeshingTag>(entity).DeferredVisibility;
+            SystemAPI.SetComponentEnabled<TerrainDeferredVisible>(entity, !deferredVisibility);
 
             for (ushort i = 0; i < 6; i++)
             {
@@ -154,14 +162,17 @@ public partial class TerrainMeshingSystem : SystemBase
                     SubMesh = (ushort)(i + 1)
                 };
 
-                RenderMeshUtility.AddComponents(skirtEntity, EntityManager, RenderMeshDescription, skirtMaterialMeshInfo);
+                // [修复] 移除不正确的 MaterialMeshInfo.defaultValue 参数
+                RenderMeshUtility.AddComponents(skirtEntity, EntityManager, renderMeshDesc, skirtMaterialMeshInfo);
                 SystemAPI.SetComponent(skirtEntity, new RenderBounds { Value = aabb });
                 SystemAPI.SetComponent(skirtEntity, new WorldRenderBounds { Value = worldAABB });
                 SystemAPI.SetComponentEnabled<TerrainDeferredVisible>(skirtEntity, BitUtils.IsBitSet(chunk.SkirtMask, i));
             }
 
             SystemAPI.SetComponentEnabled<TerrainChunkMesh>(entity, true);
-            SystemAPI.SetComponent(entity, TerrainChunkMesh.FromJobHandlerStats(stats));
+            var newMeshComponent = TerrainChunkMesh.FromJobHandlerStats(stats);
+            newMeshComponent.AccessJobHandle = this.Dependency;
+            SystemAPI.SetComponent(entity, newMeshComponent);
             SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, true);
         }
     }

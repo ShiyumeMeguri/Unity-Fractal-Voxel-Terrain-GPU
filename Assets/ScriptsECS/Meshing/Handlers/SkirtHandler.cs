@@ -10,16 +10,13 @@ namespace OptIn.Voxel.Meshing
     {
         public Vertices SkirtVertices;
         public NativeCounter VertexCounter;
-
         public NativeArray<bool> WithinThreshold;
         public NativeArray<int> CopiedVertexIndices;
         public NativeArray<int> GeneratedVertexIndices;
         public NativeArray<int> StitchedIndices;
         public NativeArray<int> ForcedPerFaceIndices;
-
         public NativeCounter StitchedTriangleCounter;
         public NativeMultiCounter ForcedTriangleCounter;
-
         public JobHandle JobHandle;
         private int3 _PaddedChunkSize;
 
@@ -27,7 +24,7 @@ namespace OptIn.Voxel.Meshing
         {
             _PaddedChunkSize = config.PaddedChunkSize;
             int faceArea = _PaddedChunkSize.x * _PaddedChunkSize.y;
-            int skirtFaceArea = faceArea;
+            int skirtFaceArea = SKIRT_SIZE * SKIRT_SIZE;
 
             WithinThreshold = new NativeArray<bool>(faceArea * 6, Allocator.Persistent);
             CopiedVertexIndices = new NativeArray<int>(faceArea * 6, Allocator.Persistent);
@@ -57,8 +54,7 @@ namespace OptIn.Voxel.Meshing
 
             var copyJob = new SkirtCopyVertexIndicesJob
             {
-                // [修复] 直接访问 core.vertexIndices
-                SourceVertexIndices = core.vertexIndices,
+                SourceVertexIndices = core.VertexIndices,
                 SkirtVertexIndicesCopied = CopiedVertexIndices,
                 PaddedChunkSize = _PaddedChunkSize
             };
@@ -71,8 +67,7 @@ namespace OptIn.Voxel.Meshing
                 SkirtVertexIndicesGenerated = GeneratedVertexIndices,
                 SkirtVertices = SkirtVertices,
                 SkirtVertexCounter = VertexCounter.ToConcurrent(),
-                // [修复] 直接访问 core.counter
-                VertexCounter = core.counter,
+                VertexCounter = core.VertexCounter,
                 PaddedChunkSize = _PaddedChunkSize,
                 voxelNormals = normals.VoxelNormals
             };

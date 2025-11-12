@@ -1,12 +1,12 @@
+// Assets/ScriptsECS/Voxel/VoxelUtils.cs
 using Unity.Mathematics;
 
 namespace OptIn.Voxel
 {
     public static class VoxelUtils
     {
-        // --- 核心常量，与参考框架对齐 ---
         public const int PHYSICAL_CHUNK_SIZE = 32;
-        public const int SIZE = 34; // 对应 PaddedChunkSize 的维度
+        public const int SIZE = 34;
         public const int FACE = SIZE * SIZE;
         public const int VOLUME = SIZE * SIZE * SIZE;
         public const int SKIRT_SIZE = SIZE;
@@ -99,7 +99,6 @@ namespace OptIn.Voxel
             return position.xy;
         }
 
-        // --- Dual Contouring Constants ---
         public static readonly int3[] DC_VERT =
         {
             new int3(0, 0, 0), new int3(1, 0, 0), new int3(1, 1, 0), new int3(0, 1, 0),
@@ -121,10 +120,6 @@ namespace OptIn.Voxel
             { new int3(0, 0, 0), new int3(-1, 0, 0), new int3(-1, 0, -1), new int3(0, 0, -1) },
             { new int3(0, 0, 0), new int3(0, -1, 0), new int3(-1, -1, 0), new int3(-1, 0, 0) }
         };
-
-        // --- Block Meshing Constants ---
-        public static readonly int[] DirectionAlignedX = { 2, 2, 0, 0, 0, 0 };
-        public static readonly int[] DirectionAlignedY = { 1, 1, 2, 2, 1, 1 };
 
         public static readonly float3[] CubeVertices =
         {

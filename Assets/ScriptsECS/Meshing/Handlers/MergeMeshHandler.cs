@@ -20,7 +20,7 @@ namespace OptIn.Voxel.Meshing
         public void Init(TerrainConfig config)
         {
             int totalMaxVertices = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z * 12;
-            int totalMaxIndices = totalMaxVertices / 4 * 6 * 2;
+            int totalMaxIndices = totalMaxVertices * 2; // Simplified, generous allocation
 
             MergedVertices = new Vertices(totalMaxVertices, Allocator.Persistent);
             MergedIndices = new NativeArray<int>(totalMaxIndices, Allocator.Persistent);
@@ -38,24 +38,20 @@ namespace OptIn.Voxel.Meshing
 
             var job = new MergeMeshJob
             {
-                // [修复] 直接访问 core 的成员
-                Vertices = core.nativeVertices,
-                Indices = core.nativeIndices,
-                VertexCounter = core.counter,
-                TriangleCounter = core.counter,
-
+                Vertices = core.Vertices,
+                Indices = core.Indices,
+                VertexCounter = core.VertexCounter,
+                TriangleCounter = core.TriangleCounter,
                 SkirtVertices = skirt.SkirtVertices,
                 SkirtStitchedIndices = skirt.StitchedIndices,
                 SkirtForcedPerFaceIndices = skirt.ForcedPerFaceIndices,
                 SkirtVertexCounter = skirt.VertexCounter,
                 SkirtStitchedTriangleCounter = skirt.StitchedTriangleCounter,
                 SkirtForcedTriangleCounter = skirt.ForcedTriangleCounter,
-
                 SubmeshIndexOffsets = SubmeshIndexOffsets,
                 SubmeshIndexCounts = SubmeshIndexCounts,
                 TotalVertexCount = TotalVertexCount,
                 TotalIndexCount = TotalIndexCount,
-
                 MergedVertices = MergedVertices,
                 MergedIndices = MergedIndices
             };

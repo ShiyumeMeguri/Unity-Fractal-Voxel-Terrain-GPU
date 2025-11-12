@@ -1,4 +1,4 @@
-// Assets/ScriptsECS/Meshing/Vertices.cs
+// Meshing/Vertices.cs
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
@@ -27,10 +27,8 @@ namespace OptIn.Voxel.Meshing
             public void AddLerped(float3 startVertex, float3 endVertex, int startIndex, int endIndex, float value, ref NativeArray<VoxelData> voxels)
             {
                 position += math.lerp(startVertex, endVertex, value);
-                // Normal and layer data would be added here if available in VoxelData
-                // For now, let's assume we'll calculate normals later or they are not used in this specific path.
+                // Note: Normals and layers should be handled properly, perhaps by passing precomputed normals here.
             }
-
 
             public void Finalize(int count)
             {
@@ -50,28 +48,16 @@ namespace OptIn.Voxel.Meshing
 
         public Vertices(int count, Allocator allocator)
         {
-            positions = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
-            normals = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
-            layers = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
-            colours = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
+            positions = new NativeArray<float3>(count, allocator);
+            normals = new NativeArray<float3>(count, allocator);
+            layers = new NativeArray<float4>(count, allocator);
+            colours = new NativeArray<float4>(count, allocator);
         }
 
         public Single this[int index]
         {
-            get => new Single
-            {
-                position = positions[index],
-                normal = normals[index],
-                layers = layers[index],
-                colour = colours[index]
-            };
-            set
-            {
-                positions[index] = value.position;
-                normals[index] = value.normal;
-                layers[index] = value.layers;
-                colours[index] = value.colour;
-            }
+            get => new Single { position = positions[index], normal = normals[index], layers = layers[index], colour = colours[index] };
+            set { positions[index] = value.position; normals[index] = value.normal; layers[index] = value.layers; colours[index] = value.colour; }
         }
 
         public void SetMeshDataAttributes(int count, Mesh.MeshData data)

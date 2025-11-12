@@ -1,4 +1,4 @@
-// Assets/ScriptsECS/Components/ChunkComponents.cs
+// Components/ChunkComponents.cs
 
 using OptIn.Voxel;
 using System;
@@ -58,9 +58,15 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent
         var normals = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
         var indices = new NativeArray<int>(stats.MainMeshIndexCount, Allocator.Persistent);
 
-        vertices.CopyFrom(stats.Vertices.positions.GetSubArray(0, stats.VertexCount));
-        normals.CopyFrom(stats.Vertices.normals.GetSubArray(0, stats.VertexCount));
-        indices.CopyFrom(stats.MainMeshIndices.GetSubArray(0, stats.MainMeshIndexCount));
+        if (stats.VertexCount > 0)
+        {
+            vertices.CopyFrom(stats.Vertices.positions.GetSubArray(0, stats.VertexCount));
+            normals.CopyFrom(stats.Vertices.normals.GetSubArray(0, stats.VertexCount));
+        }
+        if (stats.MainMeshIndexCount > 0)
+        {
+            indices.CopyFrom(stats.MainMeshIndices.GetSubArray(0, stats.MainMeshIndexCount));
+        }
 
         return new TerrainChunkMesh()
         {

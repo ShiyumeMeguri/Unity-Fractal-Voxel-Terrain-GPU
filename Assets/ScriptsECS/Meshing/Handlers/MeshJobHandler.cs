@@ -1,4 +1,4 @@
-// Assets/ScriptsECS/Meshing/Handlers/MeshJobHandler.cs
+// Meshing/Handlers/MeshJobHandler.cs
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -28,11 +28,9 @@ namespace OptIn.Voxel.Meshing
 
         private JobHandle _JobHandle;
         private Entity _Entity;
-        private TerrainConfig _Config;
 
         public MeshJobHandler(TerrainConfig config)
         {
-            _Config = config;
             _Core = new CoreMeshHandler();
             _Skirt = new SkirtHandler();
             _Merger = new MergeMeshHandler();
@@ -61,13 +59,9 @@ namespace OptIn.Voxel.Meshing
             var currentHandle = JobHandle.CombineDependencies(dependency, chunkVoxels.AsyncReadJobHandle, chunkVoxels.AsyncWriteJobHandle);
 
             _Normals.Schedule(ref chunkVoxels, currentHandle);
-
             _Core.Schedule(ref chunkVoxels, ref _Normals, _Normals.JobHandle);
-
             _Skirt.Schedule(ref chunkVoxels, ref _Core, ref _Normals, _Core.JobHandle);
-
             _Merger.Schedule(ref _Core, ref _Skirt);
-
             _Apply.Schedule(ref _Merger);
 
             _JobHandle = _Apply.JobHandle;
@@ -109,13 +103,11 @@ namespace OptIn.Voxel.Meshing
 
             if (isEmpty)
             {
-                // [修复] MeshDataArray 没有 IsCreated 属性，直接释放
                 _Apply.MeshDataArray.Dispose();
             }
             else
             {
                 outMesh = new Mesh { name = "VoxelChunkMesh", indexFormat = IndexFormat.UInt32 };
-                // [修复] MeshDataArray 没有 IsCreated 属性，直接应用并释放
                 Mesh.ApplyAndDisposeWritableMeshData(_Apply.MeshDataArray, outMesh, MeshUpdateFlags.DontValidateIndices | MeshUpdateFlags.DontRecalculateBounds);
             }
 

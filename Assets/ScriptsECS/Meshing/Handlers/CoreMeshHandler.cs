@@ -7,49 +7,89 @@ namespace OptIn.Voxel.Meshing
 {
     internal struct CoreMeshHandler : ISubHandler
     {
-        // [修复] 移除 VoxelMeshBuilder.NativeMeshData, 将其成员直接放在这里
-        public NativeArray<GPUVertex> nativeVertices;
-        public NativeArray<int> nativeIndices;
-        public NativeArray<int> vertexIndices;
-        public NativeCounter counter;
+        public Vertices Vertices;
+        public NativeArray<int> Indices;
+        public NativeArray<int> VertexIndices;
+        public NativeCounter VertexCounter;
+        public NativeCounter TriangleCounter;
+
+        private NativeArray<byte> _enabled;
+        private NativeArray<uint> _bits;
+        private int _volume;
+        private int3 _paddedChunkSize;
 
         public JobHandle JobHandle;
-        private int3 _PaddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            _PaddedChunkSize = config.PaddedChunkSize;
-            int numVoxels = _PaddedChunkSize.x * _PaddedChunkSize.y * _PaddedChunkSize.z;
-            int maxVertices = numVoxels * 12;
-            int maxIndices = maxVertices * 2;
+            _paddedChunkSize = config.PaddedChunkSize;
+            _volume = _paddedChunkSize.x * _paddedChunkSize.y * _paddedChunkSize.z;
+            int packedCount = (_volume + 31) / 32;
 
-            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
-            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
-            vertexIndices = new NativeArray<int>(numVoxels, Allocator.Persistent);
-            counter = new NativeCounter(Allocator.Persistent);
+            Vertices = new Vertices(_volume, Allocator.Persistent);
+            Indices = new NativeArray<int>(_volume * 6, Allocator.Persistent);
+            VertexIndices = new NativeArray<int>(_volume, Allocator.Persistent);
+            VertexCounter = new NativeCounter(Allocator.Persistent);
+            TriangleCounter = new NativeCounter(Allocator.Persistent);
+
+            _enabled = new NativeArray<byte>(_volume, Allocator.Persistent);
+            _bits = new NativeArray<uint>(packedCount, Allocator.Persistent);
         }
 
         public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
-            // [修复] 直接传递 NativeArray 和 NativeCounter
-            JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(
-                chunkVoxels.Voxels,
-                _PaddedChunkSize,
-                nativeVertices,
-                nativeIndices,
-                counter,
-                normals.VoxelNormals,
-                dependency);
+            VertexCounter.Count = 0;
+            TriangleCounter.Count = 0;
+
+            var checkJob = new CheckJob
+            {
+                Densities = chunkVoxels.Voxels,
+                Bits = _bits
+            };
+            var checkHandle = checkJob.Schedule(_bits.Length, 64, dependency);
+
+            var cornerJob = new CornerJob
+            {
+                Bits = _bits,
+                Enabled = _enabled,
+                ChunkSize = _paddedChunkSize
+            };
+            var cornerHandle = cornerJob.Schedule(_volume, 256, checkHandle);
+
+            var vertexJob = new VertexJob
+            {
+                Voxels = chunkVoxels.Voxels,
+                VoxelNormals = normals.VoxelNormals,
+                Enabled = _enabled,
+                Indices = VertexIndices,
+                Vertices = this.Vertices,
+                VertexCounter = this.VertexCounter.ToConcurrent(),
+                ChunkSize = _paddedChunkSize
+            };
+            var vertexHandle = vertexJob.Schedule(_volume, 256, cornerHandle);
+
+            var quadJob = new QuadJob
+            {
+                Voxels = chunkVoxels.Voxels,
+                VertexIndices = VertexIndices,
+                Enabled = _enabled,
+                Triangles = this.Indices,
+                TriangleCounter = this.TriangleCounter.ToConcurrent(),
+                ChunkSize = _paddedChunkSize
+            };
+            JobHandle = quadJob.Schedule(_volume, 256, vertexHandle);
         }
 
         public void Dispose()
         {
             JobHandle.Complete();
-            // [修复] 直接释放成员
-            if (nativeVertices.IsCreated) nativeVertices.Dispose();
-            if (nativeIndices.IsCreated) nativeIndices.Dispose();
-            if (vertexIndices.IsCreated) vertexIndices.Dispose();
-            if (counter.IsCreated) counter.Dispose();
+            Vertices.Dispose();
+            Indices.Dispose();
+            VertexIndices.Dispose();
+            VertexCounter.Dispose();
+            TriangleCounter.Dispose();
+            _enabled.Dispose();
+            _bits.Dispose();
         }
     }
 }
