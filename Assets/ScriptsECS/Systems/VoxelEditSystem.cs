@@ -39,7 +39,7 @@ public partial struct VoxelEditSystem : ISystem
         foreach (var (request, entity) in SystemAPI.Query<RefRO<VoxelEditRequest>>().WithEntityAccess())
         {
             var worldPos = request.ValueRO.WorldPosition;
-            var chunkPos = VoxelUtils.WorldToChunk(worldPos, config.ChunkSize); // [修正] 移除 ToVector3Int
+            var chunkPos = VoxelUtils.WorldToChunk(worldPos, config.ChunkSize);
 
             if (chunkMap.TryGetValue(chunkPos, out var chunkEntity))
             {

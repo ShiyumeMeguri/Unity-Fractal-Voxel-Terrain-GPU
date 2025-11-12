@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Handlers/MeshJobHandler.cs
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -56,10 +55,10 @@ namespace OptIn.Voxel.Meshing
             _Entity = entity;
             chunkVoxels.MeshingInProgress = true;
 
-            // [修复] 链式调用 CombineDependencies 来合并多个依赖项
-            var currentHandle = JobHandle.CombineDependencies(dependency, chunkVoxels.AsyncReadJobHandle);
-            currentHandle = JobHandle.CombineDependencies(currentHandle, chunkVoxels.AsyncWriteJobHandle);
-            currentHandle = JobHandle.CombineDependencies(currentHandle, _JobHandle); // 确保等待上一个使用此Handler的作业完成
+            // [修复] 将4参数的CombineDependencies拆分为链式调用
+            var handle1 = JobHandle.CombineDependencies(dependency, chunkVoxels.AsyncReadJobHandle);
+            var handle2 = JobHandle.CombineDependencies(chunkVoxels.AsyncWriteJobHandle, _JobHandle);
+            var currentHandle = JobHandle.CombineDependencies(handle1, handle2);
 
             _Normals.Schedule(ref chunkVoxels, currentHandle);
             _Core.Schedule(ref chunkVoxels, ref _Normals, _Normals.JobHandle);
@@ -104,7 +103,6 @@ namespace OptIn.Voxel.Meshing
                 MainMeshIndices = _Merger.MergedIndices,
             };
 
-            // [修复] 移除对 MeshDataArray.IsCreated 的不存在的调用
             if (isEmpty)
             {
                 _Apply.MeshDataArray.Dispose();

@@ -1,4 +1,3 @@
-// Meshing/Vertices.cs
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
@@ -19,7 +18,6 @@ namespace OptIn.Voxel.Meshing
             {
                 var start = voxels[startIndex];
                 var end = voxels[endIndex];
-
                 float value = math.unlerp(start.Density, end.Density, 0);
                 AddLerped(startVertex, endVertex, startIndex, endIndex, value, ref voxels);
             }
@@ -62,23 +60,24 @@ namespace OptIn.Voxel.Meshing
 
         public void SetMeshDataAttributes(int count, Mesh.MeshData data)
         {
+            if (count == 0) return;
+
+            // [修复] 为每个属性指定独立的流
             var descriptors = new NativeArray<VertexAttributeDescriptor>(4, Allocator.Temp)
             {
-                [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
-                [1] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3),
-                [2] = new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.Float32, 4),
-                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 4)
+                [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, stream: 0),
+                [1] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, stream: 1),
+                [2] = new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.Float32, 4, stream: 2),
+                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 4, stream: 3)
             };
             data.SetVertexBufferParams(count, descriptors);
             descriptors.Dispose();
 
-            if (count > 0)
-            {
-                positions.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(0));
-                normals.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(1));
-                colours.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(2));
-                layers.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(3));
-            }
+            // [修复] 从各自的流中获取数据
+            positions.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 0));
+            normals.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 1));
+            colours.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(stream: 2));
+            layers.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(stream: 3));
         }
 
         public void Dispose()

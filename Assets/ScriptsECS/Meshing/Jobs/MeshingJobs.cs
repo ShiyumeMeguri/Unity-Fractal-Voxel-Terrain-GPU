@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Jobs/MeshingJobs.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -94,7 +93,7 @@ namespace OptIn.Voxel.Meshing
         public Vertices MergedVertices;
         public NativeArray<int> MergedIndices;
 
-        private static void Copy(Vertices src, Vertices dst, int dstOffset, int length)
+        private static void CopyVertices(Vertices src, Vertices dst, int dstOffset, int length)
         {
             if (length == 0) return;
             src.positions.GetSubArray(0, length).CopyTo(dst.positions.GetSubArray(dstOffset, length));
@@ -103,7 +102,7 @@ namespace OptIn.Voxel.Meshing
             src.colours.GetSubArray(0, length).CopyTo(dst.colours.GetSubArray(dstOffset, length));
         }
 
-        private static void Copy<T>(NativeArray<T> src, NativeArray<T> dst, int dstOffset, int length) where T : unmanaged
+        private static void CopyIndices<T>(NativeArray<T> src, NativeArray<T> dst, int dstOffset, int length) where T : unmanaged
         {
             if (length == 0) return;
             src.GetSubArray(0, length).CopyTo(dst.GetSubArray(dstOffset, length));
@@ -115,14 +114,14 @@ namespace OptIn.Voxel.Meshing
             int skirtVertexCount = SkirtVertexCounter.Count;
             TotalVertexCount.Value = mainVertexCount + skirtVertexCount;
 
-            Copy(Vertices, MergedVertices, 0, mainVertexCount);
-            Copy(SkirtVertices, MergedVertices, mainVertexCount, skirtVertexCount);
+            CopyVertices(Vertices, MergedVertices, 0, mainVertexCount);
+            CopyVertices(SkirtVertices, MergedVertices, mainVertexCount, skirtVertexCount);
 
             int mainIndexCount = TriangleCounter.Count * 3;
             int skirtStitchedIndexCount = SkirtStitchedTriangleCounter.Count * 3;
 
-            Copy(Indices, MergedIndices, 0, mainIndexCount);
-            Copy(SkirtStitchedIndices, MergedIndices, mainIndexCount, skirtStitchedIndexCount);
+            CopyIndices(Indices, MergedIndices, 0, mainIndexCount);
+            CopyIndices(SkirtStitchedIndices, MergedIndices, mainIndexCount, skirtStitchedIndexCount);
 
             SubmeshIndexOffsets[0] = 0;
             SubmeshIndexCounts[0] = mainIndexCount + skirtStitchedIndexCount;
@@ -138,7 +137,7 @@ namespace OptIn.Voxel.Meshing
 
                 if (perFaceIndexCount > 0)
                 {
-                    Copy(SkirtForcedPerFaceIndices.GetSubArray(face * perFaceMaxIndices, perFaceIndexCount), MergedIndices, currentIndexOffset, perFaceIndexCount);
+                    CopyIndices(SkirtForcedPerFaceIndices.GetSubArray(face * perFaceMaxIndices, perFaceIndexCount), MergedIndices, currentIndexOffset, perFaceIndexCount);
                 }
 
                 SubmeshIndexOffsets[face + 1] = currentIndexOffset;

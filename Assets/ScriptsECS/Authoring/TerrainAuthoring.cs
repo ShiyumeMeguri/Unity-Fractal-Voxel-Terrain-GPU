@@ -8,7 +8,7 @@ public class TerrainAuthoring : MonoBehaviour
     public int3 PaddedChunkSize => ChunkSize + 2;
     public int2 ChunkSpawnSize = new int2(8, 8);
     public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader;
+    public ComputeShader VoxelComputeShader; // 保留 ComputeShader 引用
     public int MeshJobsPerTick = 4;
 
     class Baker : Baker<TerrainAuthoring>
@@ -32,7 +32,7 @@ public class TerrainAuthoring : MonoBehaviour
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
-                VoxelComputeShader = authoring.VoxelComputeShader
+                VoxelComputeShader = authoring.VoxelComputeShader // 在 Baker 中烘焙
             });
         }
     }
@@ -41,7 +41,7 @@ public class TerrainAuthoring : MonoBehaviour
 public class TerrainResources : IComponentData
 {
     public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader;
+    public ComputeShader VoxelComputeShader; // 重新添加
 }
 
 public struct TerrainMesherConfig : IComponentData

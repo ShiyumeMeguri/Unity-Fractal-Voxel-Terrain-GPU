@@ -1,8 +1,5 @@
-// Components/ChunkComponents.cs
-
 using OptIn.Voxel;
-using System;
-using Unity.Burst;
+using OptIn.Voxel.Meshing;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -52,7 +49,7 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent
     public NativeArray<int> MainMeshIndices;
     public JobHandle AccessJobHandle;
 
-    public static TerrainChunkMesh FromJobHandlerStats(OptIn.Voxel.Meshing.MeshJobHandler.Stats stats)
+    public static TerrainChunkMesh FromJobHandlerStats(MeshJobHandler.Stats stats)
     {
         var vertices = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
         var normals = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
@@ -60,12 +57,12 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent
 
         if (stats.VertexCount > 0)
         {
-            vertices.CopyFrom(stats.Vertices.positions.GetSubArray(0, stats.VertexCount));
-            normals.CopyFrom(stats.Vertices.normals.GetSubArray(0, stats.VertexCount));
+            stats.Vertices.positions.GetSubArray(0, stats.VertexCount).CopyTo(vertices);
+            stats.Vertices.normals.GetSubArray(0, stats.VertexCount).CopyTo(normals);
         }
         if (stats.MainMeshIndexCount > 0)
         {
-            indices.CopyFrom(stats.MainMeshIndices.GetSubArray(0, stats.MainMeshIndexCount));
+            stats.MainMeshIndices.GetSubArray(0, stats.MainMeshIndexCount).CopyTo(indices);
         }
 
         return new TerrainChunkMesh()
@@ -87,6 +84,7 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent
 
 public struct TerrainChunkRequestReadbackTag : IComponentData, IEnableableComponent
 {
+    // [修复] 重新添加此字段
     public bool SkipMeshingIfEmpty;
 }
 

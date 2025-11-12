@@ -327,4 +327,3 @@ QualitySettings:
   m_TextureMipmapLimitGroupNames: []
   m_PerPlatformDefaultQuality:
     Nintendo Switch 2: 5
-    Standalone: 5

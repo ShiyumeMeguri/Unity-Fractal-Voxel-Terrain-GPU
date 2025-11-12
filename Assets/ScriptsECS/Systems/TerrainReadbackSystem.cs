@@ -88,7 +88,6 @@ public partial class TerrainReadbackSystem : SystemBase
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        // [修正] 使用正确的字段名
         readySystems.readback = (_State == State.Idle);
 
         if (_State != State.ProcessingCompletedReadback)
@@ -255,7 +254,7 @@ public partial class TerrainReadbackSystem : SystemBase
                 if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
                 {
                     var chunkVoxelData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
-                    // 不在此处调用 Dispose()
+                    // Dispose is handled in ChunkManagerSystem
                 }
             }
             else
