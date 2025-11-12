@@ -1,7 +1,7 @@
+// Assets/ScriptsECS/Meshing/Handlers/MergeMeshHandler.cs
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using static OptIn.Voxel.VoxelUtils;
 
 namespace OptIn.Voxel.Meshing
 {
@@ -20,7 +20,7 @@ namespace OptIn.Voxel.Meshing
         public void Init(TerrainConfig config)
         {
             int totalMaxVertices = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z * 12;
-            int totalMaxIndices = totalMaxVertices / 4 * 6 * 2; // Approximation
+            int totalMaxIndices = totalMaxVertices / 4 * 6 * 2;
 
             MergedVertices = new Vertices(totalMaxVertices, Allocator.Persistent);
             MergedIndices = new NativeArray<int>(totalMaxIndices, Allocator.Persistent);
@@ -38,10 +38,11 @@ namespace OptIn.Voxel.Meshing
 
             var job = new MergeMeshJob
             {
-                Vertices = core.MeshData.nativeVertices,
-                Indices = core.MeshData.nativeIndices,
-                VertexCounter = core.MeshData.counter, // Using the same counter for vertex count approximation
-                TriangleCounter = core.MeshData.counter,
+                // [修复] 直接访问 core 的成员
+                Vertices = core.nativeVertices,
+                Indices = core.nativeIndices,
+                VertexCounter = core.counter,
+                TriangleCounter = core.counter,
 
                 SkirtVertices = skirt.SkirtVertices,
                 SkirtStitchedIndices = skirt.StitchedIndices,

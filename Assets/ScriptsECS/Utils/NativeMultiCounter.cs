@@ -1,9 +1,10 @@
+// Assets/ScriptsECS/Utils/NativeMultiCounter.cs
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
-using OptIn.Voxel; // 添加 using
+using OptIn.Voxel;
 
 namespace OptIn.Voxel.Meshing
 {
@@ -35,6 +36,9 @@ namespace OptIn.Voxel.Meshing
 #endif
         }
 
+        // [修复] 添加 IsCreated 属性
+        public bool IsCreated => _Counters != null;
+
         public int Sum()
         {
             int sum = 0;
@@ -44,11 +48,11 @@ namespace OptIn.Voxel.Meshing
             }
             return sum;
         }
-        
+
         public int[] ToArray()
         {
             int[] arr = new int[_Capacity];
-            for(int i = 0; i < _Capacity; i++)
+            for (int i = 0; i < _Capacity; i++)
             {
                 arr[i] = _Counters[i];
             }
@@ -69,8 +73,11 @@ namespace OptIn.Voxel.Meshing
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
             DisposeSentinel.Dispose(ref _Safety, ref _DisposeSentinel);
 #endif
-            UnsafeUtility.Free(_Counters, _AllocatorLabel);
-            _Counters = null;
+            if (IsCreated)
+            {
+                UnsafeUtility.Free(_Counters, _AllocatorLabel);
+                _Counters = null;
+            }
         }
 
         public Concurrent ToConcurrent()
@@ -107,7 +114,7 @@ namespace OptIn.Voxel.Meshing
 #endif
                 return Interlocked.Increment(ref *(_Counters + index)) - 1;
             }
-            
+
             public NativeCounter.Concurrent ToConcurrentNativeCounter(int index)
             {
                 if (index >= _Capacity || index < 0)

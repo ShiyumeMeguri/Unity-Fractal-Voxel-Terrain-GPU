@@ -1,4 +1,5 @@
-﻿using OptIn.Voxel;
+﻿// Assets/ScriptsECS/Systems/TerrainMeshingSystem.cs
+using OptIn.Voxel;
 using OptIn.Voxel.Meshing;
 using System.Collections.Generic;
 using System.Linq;
@@ -27,20 +28,21 @@ public partial class TerrainMeshingSystem : SystemBase
     {
         RequireForUpdate<TerrainMesherConfig>();
         RequireForUpdate<TerrainResources>();
-        _GraphicsSystem = World.GetOrCreateSystemManaged<EntitiesGraphicsSystem>();
     }
 
     protected override void OnUpdate()
     {
-        if (!SystemAPI.TryGetSingleton<TerrainMesherConfig>(out var mesherConfig)) return;
-
         if (!_IsInitialized)
         {
-            Initialize(mesherConfig);
+            if (!SystemAPI.TryGetSingleton<TerrainMesherConfig>(out var mesherConfig) ||
+                !SystemAPI.ManagedAPI.TryGetSingleton<TerrainResources>(out var resources))
+            {
+                return;
+            }
+            Initialize(mesherConfig, resources);
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        // [修正] 使用正确的字段名
         readySystems.mesher = _Handlers.All(h => h.IsFree);
 
         foreach (var handler in _Handlers)
@@ -56,7 +58,7 @@ public partial class TerrainMeshingSystem : SystemBase
             ComponentType.ReadOnly<TerrainChunkVoxelsReadyTag>(),
             ComponentType.ReadWrite<TerrainChunkVoxels>(),
             ComponentType.ReadOnly<Chunk>()
-            );
+        );
         if (query.IsEmpty) return;
 
         var freeHandlers = _Handlers.Where(h => h.IsFree).ToArray();
@@ -77,21 +79,18 @@ public partial class TerrainMeshingSystem : SystemBase
         }
     }
 
-    private void Initialize(TerrainMesherConfig mesherConfig)
+    private void Initialize(TerrainMesherConfig mesherConfig, TerrainResources resources)
     {
+        _GraphicsSystem = World.GetOrCreateSystemManaged<EntitiesGraphicsSystem>();
         var terrainConfig = SystemAPI.GetSingleton<TerrainConfig>();
-        var resources = SystemAPI.ManagedAPI.GetSingleton<TerrainResources>();
 
         _Handlers = new List<MeshJobHandler>(mesherConfig.MeshJobsPerTick);
         for (int i = 0; i < mesherConfig.MeshJobsPerTick; i++)
         {
-            var handler = new MeshJobHandler();
-            handler.Init(terrainConfig);
-            _Handlers.Add(handler);
+            _Handlers.Add(new MeshJobHandler(terrainConfig));
         }
 
         var skirtMaterial = new Material(resources.ChunkMaterial);
-
         _MainMeshMaterialID = _GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
         _SkirtMeshMaterialID = _GraphicsSystem.RegisterMaterial(skirtMaterial);
 
@@ -132,6 +131,7 @@ public partial class TerrainMeshingSystem : SystemBase
                 MeshID = meshID,
                 SubMesh = 0
             };
+
             RenderMeshUtility.AddComponents(entity, EntityManager, RenderMeshDescription, mainMaterialMeshInfo);
 
             AABB aabb = new AABB { Center = stats.Bounds.center, Extents = stats.Bounds.extents };
@@ -153,6 +153,7 @@ public partial class TerrainMeshingSystem : SystemBase
                     MeshID = meshID,
                     SubMesh = (ushort)(i + 1)
                 };
+
                 RenderMeshUtility.AddComponents(skirtEntity, EntityManager, RenderMeshDescription, skirtMaterialMeshInfo);
                 SystemAPI.SetComponent(skirtEntity, new RenderBounds { Value = aabb });
                 SystemAPI.SetComponent(skirtEntity, new WorldRenderBounds { Value = worldAABB });
@@ -161,7 +162,6 @@ public partial class TerrainMeshingSystem : SystemBase
 
             SystemAPI.SetComponentEnabled<TerrainChunkMesh>(entity, true);
             SystemAPI.SetComponent(entity, TerrainChunkMesh.FromJobHandlerStats(stats));
-
             SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, true);
         }
     }

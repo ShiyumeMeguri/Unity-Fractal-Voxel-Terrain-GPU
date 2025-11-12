@@ -41,7 +41,6 @@ namespace OptIn.Voxel.Meshing
             ForcedTriangleCounter = new NativeMultiCounter(6, Allocator.Persistent);
         }
 
-        // [修复] 接收CoreMeshHandler和NormalsHandler
         public void Schedule(ref TerrainChunkVoxels voxels, ref CoreMeshHandler core, ref NormalsHandler normals, JobHandle dependency)
         {
             VertexCounter.Count = 0;
@@ -58,7 +57,8 @@ namespace OptIn.Voxel.Meshing
 
             var copyJob = new SkirtCopyVertexIndicesJob
             {
-                SourceVertexIndices = core.MeshData.vertexIndices,
+                // [修复] 直接访问 core.vertexIndices
+                SourceVertexIndices = core.vertexIndices,
                 SkirtVertexIndicesCopied = CopiedVertexIndices,
                 PaddedChunkSize = _PaddedChunkSize
             };
@@ -71,9 +71,10 @@ namespace OptIn.Voxel.Meshing
                 SkirtVertexIndicesGenerated = GeneratedVertexIndices,
                 SkirtVertices = SkirtVertices,
                 SkirtVertexCounter = VertexCounter.ToConcurrent(),
-                VertexCounter = core.MeshData.counter,
+                // [修复] 直接访问 core.counter
+                VertexCounter = core.counter,
                 PaddedChunkSize = _PaddedChunkSize,
-                voxelNormals = normals.VoxelNormals // [修复] 传递法线数据
+                voxelNormals = normals.VoxelNormals
             };
             var vertexHandle = vertexJob.Schedule(SKIRT_FACE * 6, 64, JobHandle.CombineDependencies(copyHandle, closestHandle));
 
@@ -102,7 +103,7 @@ namespace OptIn.Voxel.Meshing
             SkirtVertices.Dispose();
             if (VertexCounter.IsCreated) VertexCounter.Dispose();
             if (StitchedTriangleCounter.IsCreated) StitchedTriangleCounter.Dispose();
-            ForcedTriangleCounter.Dispose();
+            if (ForcedTriangleCounter.IsCreated) ForcedTriangleCounter.Dispose();
         }
     }
 }

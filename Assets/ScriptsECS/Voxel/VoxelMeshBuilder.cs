@@ -9,57 +9,25 @@ public static class VoxelMeshBuilder
 {
     public static readonly int2 AtlasSize = new int2(8, 8);
 
-    public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize, NativeMeshData meshData, NativeArray<float3> precomputedNormals, JobHandle dependency)
+    public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize,
+        NativeArray<GPUVertex> vertices, NativeArray<int> indices, NativeCounter counter,
+        NativeArray<float3> precomputedNormals, JobHandle dependency)
     {
-        if (!meshData.counter.IsCreated)
-        {
-            Debug.LogError("VoxelMeshBuilder: NativeCounter is not created!");
-            return dependency;
-        }
-
-        meshData.counter.Count = 0;
+        counter.Count = 0;
 
         var job = new VoxelMeshBuildJob
         {
             voxels = voxels,
             chunkSize = chunkSize,
-            vertices = meshData.nativeVertices,
-            indices = meshData.nativeIndices,
-            counter = meshData.counter.ToConcurrent(),
+            vertices = vertices,
+            indices = indices,
+            counter = counter.ToConcurrent(),
             gradients = precomputedNormals
         };
 
         var handle = job.Schedule(dependency);
         JobHandle.ScheduleBatchedJobs();
         return handle;
-    }
-
-    public class NativeMeshData : System.IDisposable
-    {
-        public NativeArray<GPUVertex> nativeVertices;
-        public NativeArray<int> nativeIndices;
-        public NativeArray<int> vertexIndices; // For skirt generation
-        public NativeCounter counter;
-
-        public NativeMeshData(int3 paddedChunkSize)
-        {
-            int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
-            int maxVertices = numVoxels * 12;
-            int maxIndices = maxVertices * 2;
-
-            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-            vertexIndices = new NativeArray<int>(numVoxels, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-            counter = new NativeCounter(Allocator.Persistent);
-        }
-
-        public void Dispose()
-        {
-            if (nativeVertices.IsCreated) nativeVertices.Dispose();
-            if (nativeIndices.IsCreated) nativeIndices.Dispose();
-            if (vertexIndices.IsCreated) vertexIndices.Dispose();
-            if (counter.IsCreated) counter.Dispose();
-        }
     }
 
     [BurstCompile]
@@ -102,7 +70,9 @@ public static class VoxelMeshBuilder
         public void Execute()
         {
             for (int x = 1; x < chunkSize.x - 1; x++)
+            {
                 for (int y = 1; y < chunkSize.y - 1; y++)
+                {
                     for (int z = 1; z < chunkSize.z - 1; z++)
                     {
                         var pos = new int3(x, y, z);
@@ -114,7 +84,7 @@ public static class VoxelMeshBuilder
                             {
                                 if (!GetVoxelOrEmpty(pos + VoxelUtils.VoxelDirectionOffsets[direction]).IsBlock)
                                 {
-                                    AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
+                                    AddQuadByDirection(direction, voxel.GetMaterialID(), pos - 1, counter.Increment(), vertices, indices);
                                 }
                             }
                         }
@@ -160,31 +130,30 @@ public static class VoxelMeshBuilder
                             }
                         }
                     }
+                }
+            }
         }
     }
 
-    private static void AddQuadByDirection(int direction, ushort materialID, float width, float height, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
+    private static void AddQuadByDirection(int direction, ushort materialID, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
     {
         int vertexStart = quadIndex * 4;
         for (int i = 0; i < 4; i++)
         {
             float3 pos = VoxelUtils.CubeVertices[VoxelUtils.CubeFaces[i + direction * 4]];
-            pos[VoxelUtils.DirectionAlignedX[direction]] *= width;
-            pos[VoxelUtils.DirectionAlignedY[direction]] *= height;
-
             int atlasIndex = materialID * 6 + direction;
             int2 atlasPosition = new int2(atlasIndex % AtlasSize.x, atlasIndex / AtlasSize.x);
 
             vertices[vertexStart + i] = new GPUVertex
             {
                 position = pos + gridPosition,
-                normal = (float3)VoxelUtils.VoxelDirectionOffsets[direction],
-                uv = new float4(VoxelUtils.CubeUVs[i].x * width, VoxelUtils.CubeUVs[i].y * height, atlasPosition.x, atlasPosition.y)
+                normal = VoxelUtils.VoxelDirectionOffsets[direction],
+                uv = new float4(VoxelUtils.CubeUVs[i].x, VoxelUtils.CubeUVs[i].y, atlasPosition.x, atlasPosition.y)
             };
         }
 
         int indexStart = quadIndex * 6;
-        int[] cubeIndices_tris = { 0, 2, 1, 0, 3, 2 };
+        int[] cubeIndices_tris = { 0, 1, 2, 0, 2, 3 }; // Correct winding for standard quad
         for (int i = 0; i < 6; i++)
         {
             indices[indexStart + i] = vertexStart + cubeIndices_tris[i];
