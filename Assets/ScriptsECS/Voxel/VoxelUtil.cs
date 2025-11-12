@@ -6,9 +6,6 @@ namespace OptIn.Voxel
 {
     public static class VoxelUtil
     {
-        public static int3 ChunkSize;
-        public static int3 PaddedChunkSize;
-
         // --- 核心常量，与参考框架对齐 ---
         public const int SIZE = 34; // 对应 PaddedChunkSize 的维度
         public const int FACE = SIZE * SIZE;

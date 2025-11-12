@@ -1,5 +1,6 @@
 // Assets/ScriptsECS/Meshing/SkirtHandler.cs
 
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -22,11 +23,11 @@ namespace OptIn.Voxel.Meshing
         public NativeMultiCounter ForcedTriangleCounter;
 
         public JobHandle JobHandle;
-        private TerrainConfig m_Config;
+        private int3 m_PaddedChunkSize; // 新增字段
 
         public void Init(TerrainConfig config)
         {
-            m_Config = config;
+            m_PaddedChunkSize = config.PaddedChunkSize; // 存储尺寸
 
             WithinThreshold = new NativeArray<bool>(FACE * 6, Allocator.Persistent);
             CopiedVertexIndices = new NativeArray<int>(FACE * 6, Allocator.Persistent);
@@ -50,7 +51,7 @@ namespace OptIn.Voxel.Meshing
             {
                 Voxels = voxels.Voxels,
                 WithinThreshold = WithinThreshold,
-                PaddedChunkSize = m_Config.PaddedChunkSize
+                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
             };
             var closestHandle = closestSurfaceJob.Schedule(FACE * 6, 64, dependency);
 
@@ -58,7 +59,7 @@ namespace OptIn.Voxel.Meshing
             {
                 SourceVertexIndices = core.MeshData.vertexIndices,
                 SkirtVertexIndicesCopied = CopiedVertexIndices,
-                PaddedChunkSize = m_Config.PaddedChunkSize
+                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
             };
             var copyHandle = copyJob.Schedule(core.JobHandle);
 
@@ -69,9 +70,8 @@ namespace OptIn.Voxel.Meshing
                 SkirtVertexIndicesGenerated = GeneratedVertexIndices,
                 SkirtVertices = SkirtVertices,
                 SkirtVertexCounter = VertexCounter.ToConcurrent(),
-                // [FIX] Changed 'core.TriangleCounter' to 'core.MeshData.counter'
                 VertexCounter = core.MeshData.counter,
-                PaddedChunkSize = m_Config.PaddedChunkSize
+                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
             };
             var vertexHandle = vertexJob.Schedule(SKIRT_FACE * 6, 64, JobHandle.CombineDependencies(copyHandle, closestHandle));
 
@@ -84,7 +84,7 @@ namespace OptIn.Voxel.Meshing
                 SkirtForcedPerFaceIndices = ForcedPerFaceIndices,
                 SkirtStitchedTriangleCounter = StitchedTriangleCounter.ToConcurrent(),
                 SkirtForcedTriangleCounter = ForcedTriangleCounter.ToConcurrent(),
-                PaddedChunkSize = m_Config.PaddedChunkSize
+                PaddedChunkSize = m_PaddedChunkSize // 传递尺寸
             };
             JobHandle = quadJob.Schedule(FACE * 6, 64, vertexHandle);
         }

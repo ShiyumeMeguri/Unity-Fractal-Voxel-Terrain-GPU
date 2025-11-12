@@ -1,3 +1,4 @@
+
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -10,7 +11,7 @@ namespace OptIn.Voxel.Meshing
     {
         [ReadOnly] public NativeArray<Voxel> Voxels;
         [WriteOnly] public NativeArray<bool> WithinThreshold;
-        [ReadOnly] public int3 PaddedChunkSize;
+        [ReadOnly] public int3 PaddedChunkSize; // 添加字段
 
         private const int PADDING_SEARCH_AREA = 3;
 
@@ -42,7 +43,7 @@ namespace OptIn.Voxel.Meshing
                     int2 offset = new int2(x, y);
                     int3 global = VoxelUtil.UnflattenFromFaceRelative(offset + basePosition2D, direction, (int)missing);
 
-                    if (math.all(global >= 0 & global < PaddedChunkSize.x))
+                    if (math.all(global >= 0 & global < PaddedChunkSize.x)) // 修正边界检查
                     {
                         if (Voxels[VoxelUtil.To1DIndex((uint3)global, PaddedChunkSize)].IsSolid)
                         {

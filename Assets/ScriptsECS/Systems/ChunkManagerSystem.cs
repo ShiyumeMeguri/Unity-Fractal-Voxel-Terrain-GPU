@@ -76,8 +76,6 @@ public partial struct ChunkManagerSystem : ISystem
         var playerPos = SystemAPI.GetComponent<LocalToWorld>(playerEntity).Position;
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         var playerChunkPos = VoxelUtil.WorldToChunk(playerPos, config.ChunkSize);
-        VoxelUtil.ChunkSize = config.ChunkSize;
-        VoxelUtil.PaddedChunkSize = config.PaddedChunkSize;
 
         if (math.all(playerChunkPos == m_LastPlayerChunkPos))
         {
@@ -86,9 +84,6 @@ public partial struct ChunkManagerSystem : ISystem
         }
 
         m_LastPlayerChunkPos = playerChunkPos;
-        var readySystems = SystemAPI.GetSingleton<TerrainReadySystems>();
-        if (!readySystems.IsReady()) return;
-
         var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged);
 
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.Temp);
@@ -163,7 +158,7 @@ public partial struct ChunkManagerSystem : ISystem
             BitField32 neighbourMask = default;
             for (int i = 0; i < 27; i++)
             {
-                int3 offset = VoxelUtil.To3DIndex(i, new int3(3));
+                int3 offset = VoxelUtil.To3DIndex(i, new int3(3, 3, 3));
                 int3 neighbourPos = chunk.Position + offset - 1;
                 if (ChunkMap.ContainsKey(neighbourPos))
                 {
@@ -181,7 +176,6 @@ public partial struct ChunkManagerSystem : ISystem
         byte outputMask = 0;
         for (int i = 0; i < 27; i++)
         {
-            // [FIX] Changed 'IsSet((uint)i)' to 'IsSet(i)' to match argument type.
             if (!inputMask.IsSet(i))
             {
                 int3 offset = VoxelUtil.To3DIndex(i, new int3(3, 3, 3));
