@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Jobs/SkirtVertexJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -101,9 +100,9 @@ namespace OptIn.Voxel.Meshing
                 if (Voxels[startIndex].IsSolid != Voxels[endIndex].IsSolid)
                 {
                     count++;
-                    vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels);
+                    vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels, ref voxelNormals);
                 }
-                forcedVertex.AddLerped((float3)startOffset, (float3)endOffset, startIndex, endIndex, 0.5f, ref Voxels);
+                forcedVertex.AddLerped((float3)startOffset, (float3)endOffset, startIndex, endIndex, 0.5f, ref Voxels, ref voxelNormals);
             }
 
             if (count == 0)
@@ -111,15 +110,14 @@ namespace OptIn.Voxel.Meshing
                 if (force)
                 {
                     forcedVertex.Finalize(4);
-                    // [修复] 确保调用 float2 重载
-                    forcedVertex.position += VoxelUtils.UnflattenFromFaceRelative(new float2(-0.5f), faceDir, negative ? 0f : 1f);
+                    forcedVertex.position += SkirtUtils.UnflattenFromFaceRelative(new float2(-0.5f), faceDir, negative ? 0f : 1f);
                     return new VertexToSpawn { inner = forcedVertex, shouldSpawn = true };
                 }
                 return default;
             }
 
             vertex.Finalize(count);
-            vertex.position -= (float3)VoxelUtils.UnflattenFromFaceRelative(new uint2(1), faceDir);
+            vertex.position -= (float3)SkirtUtils.UnflattenFromFaceRelative(new uint2(1), faceDir);
             return new VertexToSpawn { inner = vertex, shouldSpawn = true };
         }
 
@@ -133,8 +131,7 @@ namespace OptIn.Voxel.Meshing
 
             flatten = math.clamp(flatten, 0u, (uint)(PaddedChunkSize.x - 2));
 
-            // [修复] 显式转换 'missing' 为 float 以匹配正确的重载
-            float3 worldPos = VoxelUtils.UnflattenFromFaceRelative((float2)flatten, faceDir, (float)missing);
+            float3 worldPos = SkirtUtils.UnflattenFromFaceRelative((float2)flatten, faceDir, missing);
 
             Vertices.Single vertex = new Vertices.Single();
             Vertices.Single forcedVertex = new Vertices.Single();
@@ -155,9 +152,9 @@ namespace OptIn.Voxel.Meshing
             if (Voxels[startIndex].IsSolid != Voxels[endIndex].IsSolid)
             {
                 spawn = true;
-                vertex.Add(-(float3)endOffset, float3.zero, startIndex, endIndex, ref Voxels);
+                vertex.Add(-(float3)endOffset, float3.zero, startIndex, endIndex, ref Voxels, ref voxelNormals);
             }
-            forcedVertex.AddLerped(-(float3)endOffset, float3.zero, startIndex, endIndex, 0.5f, ref Voxels);
+            forcedVertex.AddLerped(-(float3)endOffset, float3.zero, startIndex, endIndex, 0.5f, ref Voxels, ref voxelNormals);
 
             if (spawn)
             {

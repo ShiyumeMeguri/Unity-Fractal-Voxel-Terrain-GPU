@@ -14,18 +14,19 @@ namespace OptIn.Voxel.Meshing
             public float4 layers;
             public float4 colour;
 
-            public void Add(float3 startVertex, float3 endVertex, int startIndex, int endIndex, ref NativeArray<VoxelData> voxels)
+            public void Add(float3 startVertex, float3 endVertex, int startIndex, int endIndex, ref NativeArray<VoxelData> voxels, ref NativeArray<float3> voxelNormals)
             {
                 var start = voxels[startIndex];
                 var end = voxels[endIndex];
                 float value = math.unlerp(start.Density, end.Density, 0);
-                AddLerped(startVertex, endVertex, startIndex, endIndex, value, ref voxels);
+                AddLerped(startVertex, endVertex, startIndex, endIndex, value, ref voxels, ref voxelNormals);
             }
 
-            public void AddLerped(float3 startVertex, float3 endVertex, int startIndex, int endIndex, float value, ref NativeArray<VoxelData> voxels)
+            public void AddLerped(float3 startVertex, float3 endVertex, int startIndex, int endIndex, float value, ref NativeArray<VoxelData> voxels, ref NativeArray<float3> voxelNormals)
             {
                 position += math.lerp(startVertex, endVertex, value);
-                // Note: Normals and layers should be handled properly, perhaps by passing precomputed normals here.
+                normal += math.lerp(voxelNormals[startIndex], voxelNormals[endIndex], value);
+                // layers and colours can be interpolated here if needed
             }
 
             public void Finalize(int count)
@@ -62,7 +63,6 @@ namespace OptIn.Voxel.Meshing
         {
             if (count == 0) return;
 
-            // [修复] 为每个属性指定独立的流
             var descriptors = new NativeArray<VertexAttributeDescriptor>(4, Allocator.Temp)
             {
                 [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, stream: 0),
@@ -73,7 +73,6 @@ namespace OptIn.Voxel.Meshing
             data.SetVertexBufferParams(count, descriptors);
             descriptors.Dispose();
 
-            // [修复] 从各自的流中获取数据
             positions.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 0));
             normals.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 1));
             colours.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(stream: 2));

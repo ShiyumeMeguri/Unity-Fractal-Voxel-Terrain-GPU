@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Jobs/VertexJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -40,7 +39,7 @@ namespace OptIn.Voxel.Meshing
                 int startIndex = VoxelUtils.To1DIndex((uint3)(pos + (int3)startOffset), ChunkSize);
                 int endIndex = VoxelUtils.To1DIndex((uint3)(pos + (int3)endOffset), ChunkSize);
 
-                vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels);
+                vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels, ref VoxelNormals);
             }
 
             vertex.Finalize(count);

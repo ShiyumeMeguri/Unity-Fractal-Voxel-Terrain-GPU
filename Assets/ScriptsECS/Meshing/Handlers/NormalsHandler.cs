@@ -1,8 +1,6 @@
-// Assets/ScriptsECS/Meshing/Handlers/NormalsHandler.cs
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using static OptIn.Voxel.VoxelUtils;
 
 namespace OptIn.Voxel.Meshing
 {
@@ -10,19 +8,24 @@ namespace OptIn.Voxel.Meshing
     {
         public NativeArray<float3> VoxelNormals;
         public JobHandle JobHandle;
+        private int3 _paddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            VoxelNormals = new NativeArray<float3>(VOLUME, Allocator.Persistent);
+            _paddedChunkSize = config.PaddedChunkSize;
+            int volume = _paddedChunkSize.x * _paddedChunkSize.y * _paddedChunkSize.z;
+            VoxelNormals = new NativeArray<float3>(volume, Allocator.Persistent);
         }
 
         public void Schedule(ref TerrainChunkVoxels voxels, JobHandle dependency)
         {
-            // 在这里调度一个计算法线的Job，例如 NormalsCalculateJob
-            // 为了简化，我们假设您有一个可以计算法线的Job
-            // 这里我们仅为结构占位，并传递依赖项
-            // 实际的法线计算Job需要您根据VoxelData来实现
-            JobHandle = dependency; 
+            var job = new NormalsCalculateJob
+            {
+                Densities = voxels.Voxels,
+                Normals = VoxelNormals,
+                ChunkSize = _paddedChunkSize
+            };
+            JobHandle = job.Schedule(VoxelNormals.Length, 256, dependency);
         }
 
         public void Dispose()
