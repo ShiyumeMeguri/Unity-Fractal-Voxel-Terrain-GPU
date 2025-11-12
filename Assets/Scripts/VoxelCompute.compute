@@ -4,86 +4,34 @@
 
 struct Voxel
 {
-    // C# Voxel is { short voxelID; short metadata; }. Total 4 bytes.
-    // This is represented as a single uint in HLSL.
-    // lower 16 bits: voxelID (signed)
-    // upper 16 bits: metadata (signed)
     uint packedData;
 };
 RWStructuredBuffer<Voxel> asyncVoxelBuffer;
 
 int3 chunkPosition;
 uint3 chunkSize;
+uint baseIndex; // [新增] 用于指定写入缓冲区的起始索引
 
-// 硬编码
 float4 _QuaternionJuliaC;
 float _QuaternionJuliaPosW;
 
-// 综合分形距离估计函数
 float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFractalPos)
 {
     float minDistance = 99999;
-
-    // 2D 曼德博集合 DE
-    float2 mandelbrotPos;
-    float mandelbrotDistance = MandelbrotDE(fractalPos.xy, 1, mandelbrotPos);
-    
-    // 四元数茱莉亚集合 DE
-    float4 pos4D = float4(fractalPos, _QuaternionJuliaPosW);
-    float4 c = _QuaternionJuliaC;
-    float4 quaternionJuliaPos;
-    float quaternionJuliaDistance = QuaternionJuliaDE(pos4D, c, 10, quaternionJuliaPos);
-
-    // 茱莉亚集合 DE
-    float3 juliaPos;
-    float juliaDistance = JuliaDE(fractalPos, juliaPos);
-    
-    // Amazing Box DE
-    float3 amazingBoxPos;
-    float amazingBoxDistance = AmazingBoxDE(fractalPos, -1.5, 1.0, 10, amazingBoxPos);
-    
-    // Mandelbulb DE
-    float3 mandelbulbPos;
-    float mandelbulbDistance = MandelbulbDE(fractalPos, 10, 8.0, mandelbulbPos);
-    
-    // Menger 海绵 DE
-    float3 mengerPos;
-    float mengerDistance = MengerSpongeDE(fractalPos, mengerPos);
-    
-    // 谢尔宾斯基地形 DE
-    float3 sierpinskiPos;
-    float sierpinskiDistance = SierpinskiDE(fractalPos, sierpinskiPos);
-    
-    // 克莱因群 DE
     float3 kleinianPos;
-    //float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
-    float kleinianDistance = KleinianDE(fractalPos * sqrt(length(mandelbrotPos)), minFractalPos, maxFractalPos, kleinianPos);
-    
-    //minDistance = min(minDistance, quaternionJuliaDistance);
-    //minDistance = min(minDistance, mandelbrotDistance);
-    minDistance = min(minDistance, kleinianDistance);
-    //minDistance = min(minDistance, juliaDistance);
-    //minDistance = min(minDistance, amazingBoxDistance);
-    //minDistance = min(minDistance, mandelbulbDistance);
-    //minDistance = min(minDistance, mengerDistance);
-    //minDistance = min(minDistance, sierpinskiDistance);
-
+    float4 mandelbrotPos;
+    minDistance = min(minDistance, KleinianDE(fractalPos * sqrt(length(mandelbrotPos.xy)), minFractalPos, maxFractalPos, kleinianPos));
     return minDistance;
 }
 
-//---------------------------------------------------
-// Main compute function
-//---------------------------------------------------
 [numthreads(8, 8, 8)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
     if (any(id >= chunkSize))
-        return; // 防止溢出（虽修复后 id<=35, chunk=34, 但保险）
+        return;
+        
     int index = id.z + id.y * chunkSize.z + id.x * (chunkSize.y * chunkSize.z);
     
-    // Calculate world position based on logical size, with an offset for the padding.
-    // 'chunkSize' is the padded size (e.g., 34), so logical size is 'chunkSize - 2'.
-    // We offset the grid position by -1 to center the logical chunk correctly.
     uint3 logicalChunkSize = chunkSize - 2;
     int3 worldPos = (chunkPosition * (int3) logicalChunkSize) + int3(id) - 1;
     
@@ -93,24 +41,20 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float4 maxFractalPos = float4(0.3457, 1.0218, 1.2215, 0.9);
     float dist = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
     
-    // Use 32-bit integers to hold 16-bit signed values
-    int voxelID = 0; // Default to Air
-    int metadata = 0; // Default metadata
+    int voxelID = 0;
+    int metadata = 0;
     
-    // --- Default to generating Blocks ---
     if (dist < 0.0)
     {
-        voxelID = 1; // Block ID 1 (e.g., Dirt/Stone)
+        voxelID = 1;
     }
     if (fractalPos.x > 0)
     {
-        voxelID = -1; // Isosurface material ID -1
+        voxelID = -1;
         float density = clamp(-dist, -1.0, 1.0);
-        
-        // Map float density [-1, 1] to signed 16-bit integer range [-32767, 32767]
         metadata = (int) (density * 32767.0);
     }
-
-    // Pack voxelID (16-bit) and metadata (16-bit) into a single 32-bit uint
-    asyncVoxelBuffer[index].packedData = ((uint) metadata << 16) | ((uint) voxelID & 0x0000FFFF);
+    
+    // [修改] 使用 baseIndex 计算最终写入位置
+    asyncVoxelBuffer[baseIndex + index].packedData = ((uint) metadata << 16) | ((uint) voxelID & 0x0000FFFF);
 }

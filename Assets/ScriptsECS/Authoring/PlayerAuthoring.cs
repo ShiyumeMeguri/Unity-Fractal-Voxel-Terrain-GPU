@@ -10,7 +10,6 @@ public class PlayerAuthoring : MonoBehaviour
         {
             var entity = GetEntity(TransformUsageFlags.Dynamic);
             AddComponent<PlayerTag>(entity);
-            AddComponent<PlayerInput>(entity);
         }
     }
 }

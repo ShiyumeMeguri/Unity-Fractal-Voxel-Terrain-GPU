@@ -5,9 +5,11 @@ using UnityEngine;
 public class TerrainAuthoring : MonoBehaviour
 {
     public int3 ChunkSize = new int3(32, 32, 32);
+    public int3 PaddedChunkSize => ChunkSize + 2;
     public int2 ChunkSpawnSize = new int2(8, 8);
     public Material ChunkMaterial;
     public ComputeShader VoxelComputeShader;
+    public int MeshJobsPerTick = 4;
 
     class Baker : Baker<TerrainAuthoring>
     {
@@ -18,10 +20,15 @@ public class TerrainAuthoring : MonoBehaviour
             AddComponent(entity, new TerrainConfig
             {
                 ChunkSize = authoring.ChunkSize,
+                PaddedChunkSize = authoring.PaddedChunkSize,
                 ChunkSpawnSize = authoring.ChunkSpawnSize,
             });
 
-            // 将托管对象存入一个单独的托管组件中
+            AddComponent(entity, new TerrainMesherConfig
+            {
+                MeshJobsPerTick = authoring.MeshJobsPerTick
+            });
+
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
@@ -31,9 +38,13 @@ public class TerrainAuthoring : MonoBehaviour
     }
 }
 
-// 这是一个托管组件，用于存放无法进入 Burst 编译的引用类型资源
 public class TerrainResources : IComponentData
 {
     public Material ChunkMaterial;
     public ComputeShader VoxelComputeShader;
+}
+
+public struct TerrainMesherConfig : IComponentData
+{
+    public int MeshJobsPerTick;
 }

@@ -1,4 +1,6 @@
-﻿using OptIn.Voxel;
+﻿// Assets/ScriptsECS/Voxel/VoxelMeshBuilder.cs
+
+using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -7,51 +9,11 @@ using UnityEngine;
 
 public static class VoxelMeshBuilder
 {
-    public static void InitializeShaderParameter()
-    {
-        Shader.SetGlobalInt("_AtlasX", AtlasSize.x);
-        Shader.SetGlobalInt("_AtlasY", AtlasSize.y);
-        Shader.SetGlobalVector("_AtlasRec", new Vector4(1.0f / AtlasSize.x, 1.0f / AtlasSize.y));
-    }
-
     public static readonly int2 AtlasSize = new int2(8, 8);
-
-    public class NativeMeshData : System.IDisposable
-    {
-        public NativeArray<GPUVertex> nativeVertices;
-        public NativeArray<int> nativeIndices;
-        public NativeCounter counter;
-
-        public NativeMeshData(int3 paddedChunkSize)
-        {
-            int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
-            // 稍微保守的估计，以防生成非常复杂的网格
-            int maxVertices = numVoxels * 6;
-            int maxIndices = maxVertices / 4 * 6 * 2;
-
-            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
-            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
-            counter = new NativeCounter(Allocator.Persistent);
-        }
-
-        public void GetMeshInformation(out int verticeSize, out int indicesSize)
-        {
-            verticeSize = counter.Count * 4;
-            indicesSize = counter.Count * 6;
-        }
-
-        public void Dispose()
-        {
-            if (nativeVertices.IsCreated) nativeVertices.Dispose();
-            if (nativeIndices.IsCreated) nativeIndices.Dispose();
-            if (counter.IsCreated) counter.Dispose();
-        }
-    }
 
     public static JobHandle ScheduleMeshingJob(NativeArray<Voxel> voxels, int3 chunkSize, NativeMeshData meshData, JobHandle dependency)
     {
         meshData.counter.Count = 0;
-
         var job = new VoxelMeshBuildJob
         {
             voxels = voxels,
@@ -63,13 +25,41 @@ public static class VoxelMeshBuilder
         return job.Schedule(dependency);
     }
 
+    public class NativeMeshData : System.IDisposable
+    {
+        public NativeArray<GPUVertex> nativeVertices;
+        public NativeArray<int> nativeIndices;
+        public NativeArray<int> vertexIndices; // Added for skirt generation dependency
+        public NativeCounter counter;
+
+        public NativeMeshData(int3 paddedChunkSize)
+        {
+            int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
+            int maxVertices = numVoxels * 12;
+            int maxIndices = maxVertices * 2;
+
+            nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
+            nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
+            vertexIndices = new NativeArray<int>(numVoxels, Allocator.Persistent);
+            counter = new NativeCounter(Allocator.Persistent);
+        }
+
+        public void Dispose()
+        {
+            if (nativeVertices.IsCreated) nativeVertices.Dispose();
+            if (nativeIndices.IsCreated) nativeIndices.Dispose();
+            if (vertexIndices.IsCreated) vertexIndices.Dispose();
+            if (counter.IsCreated) counter.Dispose();
+        }
+    }
+
     [BurstCompile]
     private struct VoxelMeshBuildJob : IJob
     {
         [ReadOnly] public NativeArray<Voxel> voxels;
         [ReadOnly] public int3 chunkSize;
-        [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
-        [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<GPUVertex> vertices;
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> indices;
         public NativeCounter.Concurrent counter;
 
         private Voxel GetVoxelOrEmpty(int3 pos)
@@ -226,9 +216,10 @@ public static class VoxelMeshBuilder
         }
 
         int indexStart = quadIndex * 6;
+        int[] cubeIndices_tris = { 0, 2, 1, 0, 3, 2 }; // Correct winding for standard Unity quad
         for (int i = 0; i < 6; i++)
         {
-            indices[indexStart + i] = VoxelUtil.CubeIndices[i] + vertexStart; // [修正] CubeIndices 的索引应始终为 0-5
+            indices[indexStart + i] = vertexStart + cubeIndices_tris[i];
         }
     }
 }
