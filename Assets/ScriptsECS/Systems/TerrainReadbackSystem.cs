@@ -30,8 +30,6 @@ public partial class TerrainReadbackSystem : SystemBase
     private bool m_IsInitialized;
     private AsyncGPUReadbackRequest m_ReadbackRequest;
     private bool m_VoxelsFetched;
-    private bool m_CountersFetched;
-
 
     private const int BATCH_SIZE = 8;
 
@@ -79,7 +77,6 @@ public partial class TerrainReadbackSystem : SystemBase
         m_Entities.Clear();
         m_PendingCopies = default;
         m_VoxelsFetched = false;
-        m_CountersFetched = false;
     }
 
     protected override void OnUpdate()
@@ -93,7 +90,6 @@ public partial class TerrainReadbackSystem : SystemBase
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.ReadbackSystemReady = (m_State == State.Idle);
 
-        // 确保上一个Job链完成
         if (m_State != State.ProcessingCompletedReadback)
         {
             Dependency.Complete();
@@ -173,7 +169,6 @@ public partial class TerrainReadbackSystem : SystemBase
         m_ReadbackRequest = AsyncGPUReadback.Request(m_VoxelBuffer, OnVoxelDataReady);
     }
 
-    // 回调只负责复制数据和设置标志
     private void OnVoxelDataReady(AsyncGPUReadbackRequest request)
     {
         if (m_State != State.AwaitingReadbackData) return;
@@ -181,7 +176,7 @@ public partial class TerrainReadbackSystem : SystemBase
         if (request.hasError)
         {
             Debug.LogError("GPU Readback Error.");
-            m_VoxelsFetched = true; // 即使出错也要推进状态机
+            m_VoxelsFetched = true;
             return;
         }
 
@@ -196,36 +191,36 @@ public partial class TerrainReadbackSystem : SystemBase
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
-        var jobHandles = new NativeArray<JobHandle>(m_Entities.Count, Allocator.Temp);
+        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(World.Unmanaged);
+
+        JobHandle combinedHandle = Dependency;
 
         for (int i = 0; i < m_Entities.Count; i++)
         {
             Entity entity = m_Entities[i];
             if (!SystemAPI.Exists(entity))
             {
-                jobHandles[i] = Dependency;
                 continue;
             }
 
             var chunkData = new ChunkVoxelData(config.PaddedChunkSize, Allocator.Persistent);
-            EntityManager.AddComponentData(entity, chunkData);
+            ecb.AddComponent(entity, chunkData);
 
             var slice = m_ReadbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
             var copyJob = new CopyDataJob { Source = slice, Destination = chunkData.Voxels };
-            var copyHandle = copyJob.Schedule(Dependency);
+            var copyHandle = copyJob.Schedule(combinedHandle);
 
             var counter = new NativeArray<int>(1, Allocator.TempJob);
             var signCounterJob = new CountSignsJob { Voxels = chunkData.Voxels, Counter = counter };
             var signHandle = signCounterJob.Schedule(copyHandle);
 
-            var finalCopyHandle = new FinalizeReadbackJob { CounterSource = counter, CounterDest = m_SignCounters.GetSubArray(i, 1) }.Schedule(signHandle);
+            var finalJob = new FinalizeReadbackJob { CounterSource = counter, CounterDest = m_SignCounters.GetSubArray(i, 1) };
+            var finalHandle = finalJob.Schedule(signHandle);
 
-            jobHandles[i] = finalCopyHandle;
+            combinedHandle = finalHandle;
         }
 
-        m_PendingCopies = JobHandle.CombineDependencies(jobHandles);
-        jobHandles.Dispose();
-
+        m_PendingCopies = combinedHandle;
         m_State = State.ProcessingCompletedReadback;
     }
 
@@ -246,19 +241,24 @@ public partial class TerrainReadbackSystem : SystemBase
 
             SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
 
-            var skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty;
-
-            if (isEmpty && skipIfEmpty)
+            if (SystemAPI.HasComponent<TerrainChunkRequestReadbackTag>(entity))
             {
-                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
-                SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
-                var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
-                chunkVoxelData.Dispose();
-                SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
-            }
-            else
-            {
-                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
+                var skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty;
+                if (isEmpty && skipIfEmpty)
+                {
+                    SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
+                    SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+                    if (SystemAPI.HasComponent<ChunkVoxelData>(entity))
+                    {
+                        var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
+                        chunkVoxelData.Dispose();
+                        SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
+                    }
+                }
+                else
+                {
+                    SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
+                }
             }
         }
 
@@ -285,7 +285,7 @@ public partial class TerrainReadbackSystem : SystemBase
             {
                 signSum += Voxels[i].Density > 0 ? 1 : -1;
             }
-            Counter[0] = signSum;
+            Counter[0] = signSum; // [修复]
         }
     }
 
@@ -296,7 +296,7 @@ public partial class TerrainReadbackSystem : SystemBase
         [WriteOnly] public NativeSlice<int> CounterDest;
         public void Execute()
         {
-            CounterDest[0] = CounterSource[0];
+            CounterDest[0] = CounterSource[0]; // [修复]
         }
     }
 }
