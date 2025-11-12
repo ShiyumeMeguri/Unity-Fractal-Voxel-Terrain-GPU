@@ -21,7 +21,7 @@ public class TerrainAuthoring : MonoBehaviour
                 ChunkSpawnSize = authoring.ChunkSpawnSize,
             });
 
-            // 修正：将托管对象存入一个单独的组件中
+            // 将托管对象存入一个单独的托管组件中
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
@@ -31,7 +31,7 @@ public class TerrainAuthoring : MonoBehaviour
     }
 }
 
-// 修正：这是一个托管组件，应该继承 IComponentData
+// 这是一个托管组件，用于存放无法进入 Burst 编译的引用类型资源
 public class TerrainResources : IComponentData
 {
     public Material ChunkMaterial;

@@ -25,8 +25,9 @@ public static class VoxelMeshBuilder
         public NativeMeshData(int3 paddedChunkSize)
         {
             int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
-            int maxVertices = numVoxels * 5;
-            int maxIndices = maxVertices / 4 * 6;
+            // 稍微保守的估计，以防生成非常复杂的网格
+            int maxVertices = numVoxels * 6;
+            int maxIndices = maxVertices / 4 * 6 * 2;
 
             nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
             nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
@@ -62,9 +63,8 @@ public static class VoxelMeshBuilder
         return job.Schedule(dependency);
     }
 
-    // ... [VoxelMeshBuildJob and AddQuadByDirection remain unchanged] ...
     [BurstCompile]
-    struct VoxelMeshBuildJob : IJob
+    private struct VoxelMeshBuildJob : IJob
     {
         [ReadOnly] public NativeArray<Voxel> voxels;
         [ReadOnly] public int3 chunkSize;
@@ -74,7 +74,8 @@ public static class VoxelMeshBuilder
 
         private Voxel GetVoxelOrEmpty(int3 pos)
         {
-            return VoxelUtil.BoundaryCheck(pos, chunkSize) ? voxels[VoxelUtil.To1DIndex(pos, chunkSize)] : Voxel.Empty;
+            if (!VoxelUtil.BoundaryCheck(pos, chunkSize)) return Voxel.Empty;
+            return voxels[VoxelUtil.To1DIndex(pos, chunkSize)];
         }
 
         private bool SignChanged(Voxel v1, Voxel v2) => v1.Density > 0 != v2.Density > 0;
@@ -107,7 +108,6 @@ public static class VoxelMeshBuilder
         {
             float dx, dy, dz;
 
-            // X-axis
             if (pos.x == 0)
                 dx = GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos);
             else if (pos.x == chunkSize.x - 1)
@@ -115,7 +115,6 @@ public static class VoxelMeshBuilder
             else
                 dx = (GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos - new int3(1, 0, 0))) * 0.5f;
 
-            // Y-axis
             if (pos.y == 0)
                 dy = GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos);
             else if (pos.y == chunkSize.y - 1)
@@ -123,7 +122,6 @@ public static class VoxelMeshBuilder
             else
                 dy = (GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos - new int3(0, 1, 0))) * 0.5f;
 
-            // Z-axis
             if (pos.z == 0)
                 dz = GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos);
             else if (pos.z == chunkSize.z - 1)
@@ -131,15 +129,13 @@ public static class VoxelMeshBuilder
             else
                 dz = (GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos - new int3(0, 0, 1))) * 0.5f;
 
-            float3 grad = new float3(dx, dy, dz);
-            return math.normalizesafe(-grad, new float3(0, 1, 0));
+            return math.normalizesafe(-new float3(dx, dy, dz), new float3(0, 1, 0));
         }
 
         public void Execute()
         {
             int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
             var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp);
-
             for (int i = 0; i < numVoxels; i++)
             {
                 gradients[i] = CalculatePaddedGradient(VoxelUtil.To3DIndex(i, chunkSize));
@@ -156,8 +152,7 @@ public static class VoxelMeshBuilder
                         {
                             for (int direction = 0; direction < 6; direction++)
                             {
-                                Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                if (!neighborVoxel.IsBlock)
+                                if (!GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]).IsBlock)
                                 {
                                     AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
                                 }
@@ -210,7 +205,7 @@ public static class VoxelMeshBuilder
         }
     }
 
-    static void AddQuadByDirection(int direction, ushort materialID, float width, float height, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
+    private static void AddQuadByDirection(int direction, ushort materialID, float width, float height, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
     {
         int vertexStart = quadIndex * 4;
         for (int i = 0; i < 4; i++)
@@ -233,7 +228,7 @@ public static class VoxelMeshBuilder
         int indexStart = quadIndex * 6;
         for (int i = 0; i < 6; i++)
         {
-            indices[indexStart + i] = VoxelUtil.CubeIndices[i + direction * 6] + vertexStart;
+            indices[indexStart + i] = VoxelUtil.CubeIndices[i] + vertexStart; // [修正] CubeIndices 的索引应始终为 0-5
         }
     }
 }

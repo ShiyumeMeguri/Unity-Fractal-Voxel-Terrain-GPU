@@ -10,11 +10,13 @@ using Unity.Transforms;
 public partial struct ChunkManagerSystem : ISystem
 {
     private int3 lastPlayerChunkPos;
+    private EntityQuery existingChunksQuery;
 
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
         lastPlayerChunkPos = new int3(int.MinValue);
+        existingChunksQuery = state.GetEntityQuery(typeof(Chunk));
         state.RequireForUpdate<PlayerTag>();
         state.RequireForUpdate<TerrainConfig>();
     }
@@ -25,15 +27,21 @@ public partial struct ChunkManagerSystem : ISystem
     [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
+        // Guard Clause: 确保玩家实体存在且有位置信息
+        if (!SystemAPI.TryGetSingletonEntity<PlayerTag>(out var playerEntity) || !SystemAPI.HasComponent<LocalToWorld>(playerEntity))
+        {
+            return;
+        }
+
         var config = SystemAPI.GetSingleton<TerrainConfig>();
-        var playerEntity = SystemAPI.GetSingletonEntity<PlayerTag>();
-
-        if (!SystemAPI.HasComponent<LocalToWorld>(playerEntity)) return;
-
         var playerTransform = SystemAPI.GetComponent<LocalToWorld>(playerEntity);
         var playerChunkPos = (int3)math.floor(playerTransform.Position / (float3)config.ChunkSize);
 
-        if (math.all(playerChunkPos == lastPlayerChunkPos)) return;
+        // Guard Clause: 如果玩家未移动到新的区块，则不执行任何操作
+        if (math.all(playerChunkPos == lastPlayerChunkPos))
+        {
+            return;
+        }
 
         lastPlayerChunkPos = playerChunkPos;
 
@@ -42,14 +50,13 @@ public partial struct ChunkManagerSystem : ISystem
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.TempJob);
         var spawnSize = config.ChunkSpawnSize;
 
+        // 计算需要存在的区块位置
         for (int x = -spawnSize.x; x <= spawnSize.x; x++)
-            for (int y = -spawnSize.y; y <= spawnSize.y; y++)
+            for (int y = -spawnSize.y; y <= spawnSize.y; y++) // 假设y轴也需要生成
                 for (int z = -spawnSize.x; z <= spawnSize.x; z++)
                 {
                     requiredChunks.Add(playerChunkPos + new int3(x, y, z));
                 }
-
-        var existingChunksMap = new NativeHashMap<int3, bool>(requiredChunks.Count, Allocator.TempJob);
 
         // 销毁超出范围的区块
         foreach (var (chunk, entity) in SystemAPI.Query<RefRO<Chunk>>().WithEntityAccess())
@@ -58,14 +65,18 @@ public partial struct ChunkManagerSystem : ISystem
             {
                 ecb.DestroyEntity(entity);
             }
-            else
-            {
-                existingChunksMap.TryAdd(chunk.ValueRO.Position, true);
-            }
         }
 
+        // 创建当前所有区块位置的查找表
+        var existingChunksMap = new NativeHashMap<int3, bool>(existingChunksQuery.CalculateEntityCount(), Allocator.TempJob);
+        var jobHandle = new FillExistingChunksMapJob
+        {
+            ChunkMap = existingChunksMap
+        }.Schedule(existingChunksQuery, state.Dependency);
+        jobHandle.Complete(); // 必须立即完成以供主线程使用
+
         // 创建新的区块
-        var requiredChunksArray = requiredChunks.ToNativeArray(Allocator.TempJob);
+        var requiredChunksArray = requiredChunks.ToNativeArray(Allocator.Temp);
         foreach (var pos in requiredChunksArray)
         {
             if (existingChunksMap.ContainsKey(pos)) continue;
@@ -74,8 +85,8 @@ public partial struct ChunkManagerSystem : ISystem
             ecb.AddComponent(newChunk, new Chunk { Position = pos });
             ecb.AddComponent(newChunk, LocalTransform.FromPosition(pos * config.ChunkSize));
             ecb.AddComponent<LocalToWorld>(newChunk);
-            ecb.AddComponent<ChunkVoxelData>(newChunk);
 
+            // 初始化管线状态
             ecb.AddComponent<NewChunkTag>(newChunk);
             ecb.AddComponent<RequestGpuDataTag>(newChunk);
             ecb.AddComponent<PendingGpuDataTag>(newChunk);
@@ -86,6 +97,8 @@ public partial struct ChunkManagerSystem : ISystem
             ecb.AddComponent<IdleTag>(newChunk);
             ecb.AddComponent<ChunkModifiedTag>(newChunk);
 
+            // 设置初始状态：请求GPU数据
+            ecb.SetComponentEnabled<NewChunkTag>(newChunk, true);
             ecb.SetComponentEnabled<RequestGpuDataTag>(newChunk, true);
             ecb.SetComponentEnabled<PendingGpuDataTag>(newChunk, false);
             ecb.SetComponentEnabled<RequestPaddingUpdateTag>(newChunk, false);
@@ -96,8 +109,20 @@ public partial struct ChunkManagerSystem : ISystem
             ecb.SetComponentEnabled<ChunkModifiedTag>(newChunk, false);
         }
 
-        state.Dependency = requiredChunks.Dispose(state.Dependency);
-        state.Dependency = existingChunksMap.Dispose(state.Dependency);
-        state.Dependency = requiredChunksArray.Dispose(state.Dependency);
+        // 清理临时集合
+        requiredChunks.Dispose();
+        existingChunksMap.Dispose();
+        requiredChunksArray.Dispose();
+    }
+
+    [BurstCompile]
+    private partial struct FillExistingChunksMapJob : IJobEntity
+    {
+        public NativeHashMap<int3, bool> ChunkMap;
+
+        public void Execute(in Chunk chunk)
+        {
+            ChunkMap.TryAdd(chunk.Position, true);
+        }
     }
 }

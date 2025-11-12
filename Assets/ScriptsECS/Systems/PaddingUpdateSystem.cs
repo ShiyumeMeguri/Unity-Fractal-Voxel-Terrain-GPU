@@ -6,70 +6,97 @@ using Unity.Jobs;
 using Unity.Mathematics;
 
 [UpdateInGroup(typeof(SimulationSystemGroup))]
-[UpdateAfter(typeof(VoxelGenerationSystem))]
+[UpdateAfter(typeof(GpuReadbackSystem))]
 [BurstCompile]
-public partial class PaddingUpdateSystem : SystemBase
+public partial struct PaddingUpdateSystem : ISystem
 {
-    private EntityQuery m_RequestingChunksQuery;
-    private EntityQuery m_AllChunksQuery;
-    private EndSimulationEntityCommandBufferSystem m_EndSimECBSystem;
+    private EntityQuery m_AllReadyChunksQuery;
 
-    protected override void OnCreate()
+    [BurstCompile]
+    public void OnCreate(ref SystemState state)
     {
-        m_RequestingChunksQuery = GetEntityQuery(ComponentType.ReadOnly<Chunk>(), ComponentType.ReadOnly<RequestPaddingUpdateTag>());
-        m_AllChunksQuery = GetEntityQuery(ComponentType.ReadOnly<Chunk>());
-        m_EndSimECBSystem = World.GetOrCreateSystemManaged<EndSimulationEntityCommandBufferSystem>();
-
-        RequireForUpdate<TerrainConfig>();
-        RequireForUpdate(m_RequestingChunksQuery);
+        // 查询所有已完成GPU数据生成的区块
+        m_AllReadyChunksQuery = state.GetEntityQuery(
+            ComponentType.ReadOnly<Chunk>(),
+            ComponentType.ReadOnly<ChunkVoxelData>(),
+            ComponentType.Exclude<NewChunkTag>(),
+            ComponentType.Exclude<RequestGpuDataTag>(),
+            ComponentType.Exclude<PendingGpuDataTag>()
+        );
+        state.RequireForUpdate<TerrainConfig>();
+        state.RequireForUpdate(state.GetEntityQuery(ComponentType.ReadOnly<RequestPaddingUpdateTag>()));
     }
 
-    protected override void OnUpdate()
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
     {
-        // 确保之前的Job已完成，这样我们可以安全地访问组件数据
-        CompleteDependency();
-
         var config = SystemAPI.GetSingleton<TerrainConfig>();
-        var ecb = m_EndSimECBSystem.CreateCommandBuffer();
+        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter();
 
-        // 在主线程上创建查找表
-        var chunkMap = new NativeHashMap<int3, Entity>(m_AllChunksQuery.CalculateEntityCount(), Allocator.Temp);
-        foreach (var (chunk, entity) in SystemAPI.Query<RefRO<Chunk>>().WithEntityAccess())
+        var chunkMap = new NativeHashMap<int3, Entity>(m_AllReadyChunksQuery.CalculateEntityCount(), Allocator.TempJob);
+
+        var jobHandle = new FillChunkMapJob
         {
-            chunkMap.TryAdd(chunk.ValueRO.Position, entity);
+            ChunkMap = chunkMap,
+        }.Schedule(m_AllReadyChunksQuery, state.Dependency);
+
+        jobHandle = new UpdatePaddingJob
+        {
+            ECB = ecb,
+            ChunkMap = chunkMap,
+            ChunkDataLookup = SystemAPI.GetComponentLookup<ChunkVoxelData>(false),
+            PaddedChunkSize = config.ChunkSize + 2,
+            LogicalChunkSize = config.ChunkSize,
+        }.Schedule(jobHandle);
+
+        state.Dependency = chunkMap.Dispose(jobHandle);
+    }
+
+    [BurstCompile]
+    private partial struct FillChunkMapJob : IJobEntity
+    {
+        public NativeHashMap<int3, Entity> ChunkMap;
+
+        public void Execute(Entity entity, [ReadOnly] in Chunk chunk)
+        {
+            ChunkMap.TryAdd(chunk.Position, entity);
         }
+    }
 
-        var chunkDataLookup = SystemAPI.GetComponentLookup<ChunkVoxelData>(true); // 只读用于检查邻居
-        var chunkDataWriter = SystemAPI.GetComponentLookup<ChunkVoxelData>(false); // 读写用于修改中心区块
+    [BurstCompile]
+    [WithAll(typeof(RequestPaddingUpdateTag))]
+    private partial struct UpdatePaddingJob : IJobEntity
+    {
+        public EntityCommandBuffer.ParallelWriter ECB;
 
-        // [修复] 将所有逻辑移至主线程的 foreach 循环中
-        foreach (var entity in m_RequestingChunksQuery.ToEntityArray(Allocator.Temp))
+        [ReadOnly] public NativeHashMap<int3, Entity> ChunkMap;
+        [NativeDisableParallelForRestriction]
+        public ComponentLookup<ChunkVoxelData> ChunkDataLookup;
+
+        public int3 PaddedChunkSize;
+        public int3 LogicalChunkSize;
+
+        public void Execute(Entity entity, [ChunkIndexInQuery] int chunkIndex, [ReadOnly] ref Chunk chunk)
         {
-            var chunk = SystemAPI.GetComponent<Chunk>(entity);
-
-            if (!chunkDataLookup.HasComponent(entity) || !chunkDataLookup[entity].IsCreated) continue;
-
-            // 检查所有邻居是否都已准备好
-            bool allNeighborsReady = true;
+            // 检查所有邻居是否都准备好了
             for (int i = 0; i < 27; i++)
             {
                 if (i == 13) continue;
                 var offset = new int3(i % 3 - 1, (i / 3) % 3 - 1, i / 9 - 1);
                 var neighborPos = chunk.Position + offset;
-
-                if (!chunkMap.TryGetValue(neighborPos, out var neighborEntity) ||
-                    !chunkDataLookup.HasComponent(neighborEntity) ||
-                    !chunkDataLookup[neighborEntity].IsCreated)
+                if (!ChunkMap.ContainsKey(neighborPos))
                 {
-                    allNeighborsReady = false;
-                    break;
+                    // 如果有任何一个邻居还没准备好，就直接返回，下一帧再试
+                    return;
                 }
             }
 
-            if (!allNeighborsReady) continue;
+            var centerVoxelData = ChunkDataLookup[entity];
+            if (!centerVoxelData.IsCreated) return;
 
-            // 如果所有邻居都准备好了，则执行 Padding 复制
-            var centerVoxels = chunkDataWriter[entity].Voxels;
+            var centerVoxels = centerVoxelData.Voxels;
+
+            // 复制所有邻居的边界体素
             for (int dx = -1; dx <= 1; dx++)
                 for (int dy = -1; dy <= 1; dy++)
                     for (int dz = -1; dz <= 1; dz++)
@@ -77,41 +104,46 @@ public partial class PaddingUpdateSystem : SystemBase
                         if (dx == 0 && dy == 0 && dz == 0) continue;
                         var offset = new int3(dx, dy, dz);
                         var neighborPos = chunk.Position + offset;
-                        var neighborVoxels = chunkDataLookup[chunkMap[neighborPos]].Voxels;
-                        CopyPadding(centerVoxels, neighborVoxels, offset, config.ChunkSize + 2, config.ChunkSize);
+                        var neighborVoxels = ChunkDataLookup[ChunkMap[neighborPos]].Voxels;
+
+                        CopyPadding(centerVoxels, neighborVoxels, offset);
                     }
 
-            // 更新组件状态
-            ecb.SetComponentEnabled<RequestPaddingUpdateTag>(entity, false);
-            ecb.SetComponentEnabled<RequestMeshTag>(entity, true);
+            // 更新状态，进入网格生成阶段
+            ECB.SetComponentEnabled<RequestPaddingUpdateTag>(chunkIndex, entity, false);
+            ECB.SetComponentEnabled<RequestMeshTag>(chunkIndex, entity, true);
         }
 
-        chunkMap.Dispose();
-        m_EndSimECBSystem.AddJobHandleForProducer(Dependency);
-    }
+        private void CopyPadding(NativeArray<Voxel> centerVoxels, [ReadOnly] NativeArray<Voxel> neighborVoxels, int3 offset)
+        {
+            int3 src_start = new int3(
+                offset.x == 1 ? 1 : (offset.x == -1 ? LogicalChunkSize.x : 1),
+                offset.y == 1 ? 1 : (offset.y == -1 ? LogicalChunkSize.y : 1),
+                offset.z == 1 ? 1 : (offset.z == -1 ? LogicalChunkSize.z : 1)
+            );
 
-    // 将此方法设为静态，因为它不再是作业的一部分
-    private static void CopyPadding(NativeArray<Voxel> centerVoxels, [ReadOnly] NativeArray<Voxel> neighborVoxels, int3 offset, int3 PaddedChunkSize, int3 LogicalChunkSize)
-    {
-        int3 src_start = math.select((int3)1, new int3(LogicalChunkSize.x, LogicalChunkSize.y, LogicalChunkSize.z), offset == -1);
-        src_start = math.select(src_start, (int3)1, offset == 1);
+            int3 src_end = new int3(
+                offset.x == 1 ? 1 : (offset.x == -1 ? LogicalChunkSize.x : LogicalChunkSize.x),
+                offset.y == 1 ? 1 : (offset.y == -1 ? LogicalChunkSize.y : LogicalChunkSize.y),
+                offset.z == 1 ? 1 : (offset.z == -1 ? LogicalChunkSize.z : LogicalChunkSize.z)
+            );
 
-        int3 src_end = math.select(LogicalChunkSize, (int3)1, offset == 1);
-        src_end = math.select(src_end, LogicalChunkSize, offset == -1);
-        src_end = math.select(src_end, LogicalChunkSize, offset == 0);
+            int3 dst_start = new int3(
+                offset.x == 1 ? PaddedChunkSize.x - 1 : (offset.x == -1 ? 0 : 1),
+                offset.y == 1 ? PaddedChunkSize.y - 1 : (offset.y == -1 ? 0 : 1),
+                offset.z == 1 ? PaddedChunkSize.z - 1 : (offset.z == -1 ? 0 : 1)
+            );
 
-        int3 dst_start = math.select((int3)1, (int3)0, offset == -1);
-        dst_start = math.select(dst_start, PaddedChunkSize - 1, offset == 1);
-
-        for (int z = src_start.z; z <= src_end.z; z++)
-            for (int y = src_start.y; y <= src_end.y; y++)
-                for (int x = src_start.x; x <= src_end.x; x++)
-                {
-                    var src_local = new int3(x, y, z);
-                    var dst_local = dst_start + (src_local - src_start);
-                    int srcIndex = VoxelUtil.To1DIndex(src_local, PaddedChunkSize);
-                    int dstIndex = VoxelUtil.To1DIndex(dst_local, PaddedChunkSize);
-                    centerVoxels[dstIndex] = neighborVoxels[srcIndex];
-                }
+            for (int z = src_start.z; z <= src_end.z; z++)
+                for (int y = src_start.y; y <= src_end.y; y++)
+                    for (int x = src_start.x; x <= src_end.x; x++)
+                    {
+                        var src_local = new int3(x, y, z);
+                        var dst_local = dst_start + (src_local - src_start);
+                        int srcIndex = VoxelUtil.To1DIndex(src_local, PaddedChunkSize);
+                        int dstIndex = VoxelUtil.To1DIndex(dst_local, PaddedChunkSize);
+                        centerVoxels[dstIndex] = neighborVoxels[srcIndex];
+                    }
+        }
     }
 }
