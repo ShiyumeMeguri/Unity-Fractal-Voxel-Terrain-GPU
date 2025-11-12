@@ -1,10 +1,8 @@
-// Assets/ScriptsECS/Voxel/VoxelUtil.cs
-
 using Unity.Mathematics;
 
 namespace OptIn.Voxel
 {
-    public static class VoxelUtil
+    public static class VoxelUtils
     {
         // --- 核心常量，与参考框架对齐 ---
         public const int SIZE = 34; // 对应 PaddedChunkSize 的维度

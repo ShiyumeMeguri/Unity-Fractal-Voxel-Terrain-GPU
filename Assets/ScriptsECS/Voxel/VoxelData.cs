@@ -6,7 +6,7 @@ namespace OptIn.Voxel
 {
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
-    public struct Voxel
+    public struct VoxelData
     {
         /// <summary>
         /// ID of the voxel.
@@ -22,7 +22,7 @@ namespace OptIn.Voxel
         /// </summary>
         public short metadata;
 
-        public static Voxel Empty => new Voxel { voxelID = 0, metadata = 0 };
+        public static VoxelData Empty => new VoxelData { voxelID = 0, metadata = 0 };
 
         public float Density
         {

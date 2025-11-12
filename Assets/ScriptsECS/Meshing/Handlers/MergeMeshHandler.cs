@@ -1,7 +1,7 @@
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using static OptIn.Voxel.VoxelUtil;
+using static OptIn.Voxel.VoxelUtils;
 
 namespace OptIn.Voxel.Meshing
 {

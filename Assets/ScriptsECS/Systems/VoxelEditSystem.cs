@@ -39,7 +39,7 @@ public partial struct VoxelEditSystem : ISystem
         foreach (var (request, entity) in SystemAPI.Query<RefRO<VoxelEditRequest>>().WithEntityAccess())
         {
             var worldPos = request.ValueRO.WorldPosition;
-            var chunkPos = VoxelUtil.WorldToChunk(worldPos, config.ChunkSize); // [修正] 移除 ToVector3Int
+            var chunkPos = VoxelUtils.WorldToChunk(worldPos, config.ChunkSize); // [修正] 移除 ToVector3Int
 
             if (chunkMap.TryGetValue(chunkPos, out var chunkEntity))
             {
@@ -56,9 +56,9 @@ public partial struct VoxelEditSystem : ISystem
                         if (request.ValueRO.Type == VoxelEditRequest.EditType.SetBlock)
                         {
                             var arrayIndex = gridPos + 1;
-                            if (VoxelUtil.BoundaryCheck(arrayIndex, paddedChunkSize))
+                            if (VoxelUtils.BoundaryCheck(arrayIndex, paddedChunkSize))
                             {
-                                int idx1D = VoxelUtil.To1DIndex(arrayIndex, paddedChunkSize);
+                                int idx1D = VoxelUtils.To1DIndex(arrayIndex, paddedChunkSize);
                                 var voxel = voxels[idx1D];
 
                                 voxel.voxelID = request.ValueRO.VoxelID;

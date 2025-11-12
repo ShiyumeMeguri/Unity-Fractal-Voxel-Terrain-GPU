@@ -9,7 +9,7 @@ namespace OptIn.Voxel.Meshing
     [BurstCompile]
     public struct SkirtClosestSurfaceJob : IJobParallelFor
     {
-        [ReadOnly] public NativeArray<Voxel> Voxels;
+        [ReadOnly] public NativeArray<VoxelData> Voxels;
         [WriteOnly] public NativeArray<bool> WithinThreshold;
         [ReadOnly] public int3 PaddedChunkSize; // 添加字段
 
@@ -26,10 +26,10 @@ namespace OptIn.Voxel.Meshing
             int localIndex = index % faceArea;
             uint missing = negative ? 0u : (uint)PaddedChunkSize.x - 2;
 
-            uint2 flattened = (uint2)VoxelUtil.To3DIndex(localIndex, new int3(PaddedChunkSize.x, PaddedChunkSize.y, 1)).xy;
-            uint3 position = VoxelUtil.UnflattenFromFaceRelative(flattened, direction, missing);
+            uint2 flattened = (uint2)VoxelUtils.To3DIndex(localIndex, new int3(PaddedChunkSize.x, PaddedChunkSize.y, 1)).xy;
+            uint3 position = VoxelUtils.UnflattenFromFaceRelative(flattened, direction, missing);
 
-            if (Voxels[VoxelUtil.To1DIndex(position, PaddedChunkSize)].IsSolid)
+            if (Voxels[VoxelUtils.To1DIndex(position, PaddedChunkSize)].IsSolid)
             {
                 return;
             }
@@ -41,11 +41,11 @@ namespace OptIn.Voxel.Meshing
                 for (int y = -PADDING_SEARCH_AREA; y <= PADDING_SEARCH_AREA; y++)
                 {
                     int2 offset = new int2(x, y);
-                    int3 global = VoxelUtil.UnflattenFromFaceRelative(offset + basePosition2D, direction, (int)missing);
+                    int3 global = VoxelUtils.UnflattenFromFaceRelative(offset + basePosition2D, direction, (int)missing);
 
                     if (math.all(global >= 0 & global < PaddedChunkSize.x)) // 修正边界检查
                     {
-                        if (Voxels[VoxelUtil.To1DIndex((uint3)global, PaddedChunkSize)].IsSolid)
+                        if (Voxels[VoxelUtils.To1DIndex((uint3)global, PaddedChunkSize)].IsSolid)
                         {
                             WithinThreshold[index] = true;
                             return;

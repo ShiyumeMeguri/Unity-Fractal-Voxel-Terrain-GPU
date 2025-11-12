@@ -9,7 +9,7 @@ public static class VoxelMeshBuilder
 {
     public static readonly int2 AtlasSize = new int2(8, 8);
 
-    public static JobHandle ScheduleMeshingJob(NativeArray<Voxel> voxels, int3 chunkSize, NativeMeshData meshData, JobHandle dependency)
+    public static JobHandle ScheduleMeshingJob(NativeArray<VoxelData> voxels, int3 chunkSize, NativeMeshData meshData, JobHandle dependency)
     {
         meshData.counter.Count = 0;
         var job = new VoxelMeshBuildJob
@@ -54,19 +54,19 @@ public static class VoxelMeshBuilder
     [BurstCompile]
     private struct VoxelMeshBuildJob : IJob
     {
-        [ReadOnly] public NativeArray<Voxel> voxels;
+        [ReadOnly] public NativeArray<VoxelData> voxels;
         [ReadOnly] public int3 chunkSize;
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<GPUVertex> vertices;
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> indices;
         public NativeCounter.Concurrent counter;
 
-        private Voxel GetVoxelOrEmpty(int3 pos)
+        private VoxelData GetVoxelOrEmpty(int3 pos)
         {
-            if (!VoxelUtil.BoundaryCheck(pos, chunkSize)) return Voxel.Empty;
-            return voxels[VoxelUtil.To1DIndex(pos, chunkSize)];
+            if (!VoxelUtils.BoundaryCheck(pos, chunkSize)) return VoxelData.Empty;
+            return voxels[VoxelUtils.To1DIndex(pos, chunkSize)];
         }
 
-        private bool SignChanged(Voxel v1, Voxel v2) => v1.Density > 0 != v2.Density > 0;
+        private bool SignChanged(VoxelData v1, VoxelData v2) => v1.Density > 0 != v2.Density > 0;
 
         private float3 CalculateFeaturePoint(int3 pos)
         {
@@ -74,13 +74,13 @@ public static class VoxelMeshBuilder
             int crossings = 0;
             for (int i = 0; i < 12; i++)
             {
-                Voxel v1 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]);
-                Voxel v2 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]);
+                VoxelData v1 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 0]]);
+                VoxelData v2 = GetVoxelOrEmpty(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 1]]);
                 if (v1.IsIsosurface && v2.IsIsosurface && SignChanged(v1, v2))
                 {
                     float t = math.unlerp(v1.Density, v2.Density, 0f);
                     if (!float.IsFinite(t)) t = 0.5f;
-                    pointSum += math.lerp((float3)(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]), (float3)(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]), t);
+                    pointSum += math.lerp((float3)(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 0]]), (float3)(pos + VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[i, 1]]), t);
                     crossings++;
                 }
             }
@@ -89,7 +89,7 @@ public static class VoxelMeshBuilder
 
         private float GetDensityForGradient(int3 pos)
         {
-            return voxels[VoxelUtil.To1DIndex(pos, chunkSize)].Density;
+            return voxels[VoxelUtils.To1DIndex(pos, chunkSize)].Density;
         }
 
         private float3 CalculatePaddedGradient(int3 pos)
@@ -126,7 +126,7 @@ public static class VoxelMeshBuilder
             var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp);
             for (int i = 0; i < numVoxels; i++)
             {
-                gradients[i] = CalculatePaddedGradient(VoxelUtil.To3DIndex(i, chunkSize));
+                gradients[i] = CalculatePaddedGradient(VoxelUtils.To3DIndex(i, chunkSize));
             }
 
             for (int x = 1; x < chunkSize.x - 1; x++)
@@ -140,7 +140,7 @@ public static class VoxelMeshBuilder
                         {
                             for (int direction = 0; direction < 6; direction++)
                             {
-                                if (!GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]).IsBlock)
+                                if (!GetVoxelOrEmpty(pos + VoxelUtils.VoxelDirectionOffsets[direction]).IsBlock)
                                 {
                                     AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
                                 }
@@ -149,7 +149,7 @@ public static class VoxelMeshBuilder
 
                         for (int axis = 0; axis < 3; axis++)
                         {
-                            var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
+                            var neighbor = GetVoxelOrEmpty(pos + VoxelUtils.DC_AXES[axis]);
                             if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                             {
                                 int quadIndex = counter.Increment();
@@ -157,11 +157,11 @@ public static class VoxelMeshBuilder
 
                                 for (int i = 0; i < 4; i++)
                                 {
-                                    var cornerPos = pos + VoxelUtil.DC_ADJACENT[axis, i];
+                                    var cornerPos = pos + VoxelUtils.DC_ADJACENT[axis, i];
                                     vertices[quadIndex * 4 + i] = new GPUVertex
                                     {
                                         position = CalculateFeaturePoint(cornerPos) - 1,
-                                        normal = gradients[VoxelUtil.To1DIndex(cornerPos, chunkSize)],
+                                        normal = gradients[VoxelUtils.To1DIndex(cornerPos, chunkSize)],
                                         uv = new float4(0, 0, materialId, 0)
                                     };
                                 }
@@ -198,9 +198,9 @@ public static class VoxelMeshBuilder
         int vertexStart = quadIndex * 4;
         for (int i = 0; i < 4; i++)
         {
-            float3 pos = VoxelUtil.CubeVertices[VoxelUtil.CubeFaces[i + direction * 4]];
-            pos[VoxelUtil.DirectionAlignedX[direction]] *= width;
-            pos[VoxelUtil.DirectionAlignedY[direction]] *= height;
+            float3 pos = VoxelUtils.CubeVertices[VoxelUtils.CubeFaces[i + direction * 4]];
+            pos[VoxelUtils.DirectionAlignedX[direction]] *= width;
+            pos[VoxelUtils.DirectionAlignedY[direction]] *= height;
 
             int atlasIndex = materialID * 6 + direction;
             int2 atlasPosition = new int2(atlasIndex % AtlasSize.x, atlasIndex / AtlasSize.x);
@@ -208,8 +208,8 @@ public static class VoxelMeshBuilder
             vertices[vertexStart + i] = new GPUVertex
             {
                 position = pos + gridPosition,
-                normal = (float3)VoxelUtil.VoxelDirectionOffsets[direction],
-                uv = new float4(VoxelUtil.CubeUVs[i].x * width, VoxelUtil.CubeUVs[i].y * height, atlasPosition.x, atlasPosition.y)
+                normal = (float3)VoxelUtils.VoxelDirectionOffsets[direction],
+                uv = new float4(VoxelUtils.CubeUVs[i].x * width, VoxelUtils.CubeUVs[i].y * height, atlasPosition.x, atlasPosition.y)
             };
         }
 

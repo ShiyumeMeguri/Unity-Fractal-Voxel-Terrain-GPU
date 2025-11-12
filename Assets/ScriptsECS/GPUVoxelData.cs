@@ -21,12 +21,12 @@ public class GPUVoxelData : System.IDisposable
     private void AllocateBuffer(int3 size)
     {
         int numVoxels = size.x * size.y * size.z;
-        int voxelSize = UnsafeUtility.SizeOf<Voxel>();
+        int voxelSize = UnsafeUtility.SizeOf<VoxelData>();
         m_VoxelBuffer?.Release();
         m_VoxelBuffer = new ComputeBuffer(numVoxels, voxelSize, ComputeBufferType.Default);
     }
 
-    public IEnumerator Generate(Voxel[] voxels, int3 chunkPosition, int3 newChunkSize, ComputeShader computeShader)
+    public IEnumerator Generate(VoxelData[] voxels, int3 chunkPosition, int3 newChunkSize, ComputeShader computeShader)
     {
         if (!newChunkSize.Equals(m_CurrentChunkSize))
         {
@@ -60,16 +60,16 @@ public class GPUVoxelData : System.IDisposable
             yield break;
         }
 
-        var nativeData = request.GetData<Voxel>();
+        var nativeData = request.GetData<VoxelData>();
         CopyNativeDataToManaged(voxels, nativeData, nativeData.Length);
     }
 
-    private static unsafe void CopyNativeDataToManaged(Voxel[] voxels, NativeArray<Voxel> nativeData, int numVoxels)
+    private static unsafe void CopyNativeDataToManaged(VoxelData[] voxels, NativeArray<VoxelData> nativeData, int numVoxels)
     {
         if (voxels.Length < numVoxels) return;
-        fixed (Voxel* dest = voxels)
+        fixed (VoxelData* dest = voxels)
         {
-            UnsafeUtility.MemCpy(dest, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(nativeData), numVoxels * (long)UnsafeUtility.SizeOf<Voxel>());
+            UnsafeUtility.MemCpy(dest, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(nativeData), numVoxels * (long)UnsafeUtility.SizeOf<VoxelData>());
         }
     }
 

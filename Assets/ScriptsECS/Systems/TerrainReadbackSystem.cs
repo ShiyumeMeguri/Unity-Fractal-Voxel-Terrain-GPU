@@ -22,10 +22,10 @@ public partial class TerrainReadbackSystem : SystemBase
     }
 
     private State m_State;
-    private List<Entity> m_Entities;
+    private List<(Entity Entity, bool SkipMeshingIfEmpty)> m_BatchInfo; // [修复] 存储实体和它的Tag数据
     private JobHandle m_PendingCopies;
     private ComputeBuffer m_VoxelBuffer;
-    private NativeArray<Voxel> m_ReadbackData;
+    private NativeArray<VoxelData> m_ReadbackData;
     private NativeArray<int> m_SignCounters;
     private bool m_IsInitialized;
     private AsyncGPUReadbackRequest m_ReadbackRequest;
@@ -39,7 +39,7 @@ public partial class TerrainReadbackSystem : SystemBase
         RequireForUpdate<TerrainResources>();
         RequireForUpdate<TerrainChunkRequestReadbackTag>();
 
-        m_Entities = new List<Entity>(BATCH_SIZE);
+        m_BatchInfo = new List<(Entity, bool)>(BATCH_SIZE);
         m_State = State.Idle;
         m_IsInitialized = false;
     }
@@ -51,8 +51,8 @@ public partial class TerrainReadbackSystem : SystemBase
 
         if (totalVoxels > 0)
         {
-            m_VoxelBuffer = new ComputeBuffer(totalVoxels, UnsafeUtility.SizeOf<Voxel>(), ComputeBufferType.Structured);
-            m_ReadbackData = new NativeArray<Voxel>(totalVoxels, Allocator.Persistent);
+            m_VoxelBuffer = new ComputeBuffer(totalVoxels, UnsafeUtility.SizeOf<VoxelData>(), ComputeBufferType.Structured);
+            m_ReadbackData = new NativeArray<VoxelData>(totalVoxels, Allocator.Persistent);
             m_SignCounters = new NativeArray<int>(BATCH_SIZE, Allocator.Persistent);
         }
         else
@@ -74,7 +74,7 @@ public partial class TerrainReadbackSystem : SystemBase
     private void ResetState()
     {
         m_State = State.Idle;
-        m_Entities.Clear();
+        m_BatchInfo.Clear();
         m_PendingCopies = default;
         m_VoxelsFetched = false;
     }
@@ -130,7 +130,7 @@ public partial class TerrainReadbackSystem : SystemBase
         if (numToProcess == 0) return;
 
         m_State = State.AwaitingDispatch;
-        m_Entities.Clear();
+        m_BatchInfo.Clear();
 
         var cmd = CommandBufferPool.Get("Voxel Generation Dispatch");
         var compute = resources.VoxelComputeShader;
@@ -151,7 +151,11 @@ public partial class TerrainReadbackSystem : SystemBase
         for (int i = 0; i < numToProcess; i++)
         {
             Entity entity = entitiesArray[i];
-            m_Entities.Add(entity);
+
+            // [修复] 在禁用Tag之前读取并缓存数据
+            var requestTag = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity);
+            m_BatchInfo.Add((entity, requestTag.SkipMeshingIfEmpty));
+
             var chunk = SystemAPI.GetComponent<Chunk>(entity);
 
             int baseIndex = i * voxelsPerChunk;
@@ -180,7 +184,7 @@ public partial class TerrainReadbackSystem : SystemBase
             return;
         }
 
-        request.GetData<Voxel>().CopyTo(m_ReadbackData);
+        request.GetData<VoxelData>().CopyTo(m_ReadbackData);
         m_VoxelsFetched = true;
     }
 
@@ -195,9 +199,9 @@ public partial class TerrainReadbackSystem : SystemBase
 
         JobHandle combinedHandle = Dependency;
 
-        for (int i = 0; i < m_Entities.Count; i++)
+        for (int i = 0; i < m_BatchInfo.Count; i++)
         {
-            Entity entity = m_Entities[i];
+            Entity entity = m_BatchInfo[i].Entity;
             if (!SystemAPI.Exists(entity))
             {
                 continue;
@@ -232,33 +236,30 @@ public partial class TerrainReadbackSystem : SystemBase
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
-        for (int i = 0; i < m_Entities.Count; i++)
+        for (int i = 0; i < m_BatchInfo.Count; i++)
         {
-            Entity entity = m_Entities[i];
+            Entity entity = m_BatchInfo[i].Entity;
             if (!SystemAPI.Exists(entity)) continue;
 
             bool isEmpty = math.abs(m_SignCounters[i]) == voxelsPerChunk;
+            bool skipIfEmpty = m_BatchInfo[i].SkipMeshingIfEmpty; // [修复] 使用缓存的数据
 
             SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
 
-            if (SystemAPI.HasComponent<TerrainChunkRequestReadbackTag>(entity))
+            if (isEmpty && skipIfEmpty)
             {
-                var skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty;
-                if (isEmpty && skipIfEmpty)
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
+                SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+                if (SystemAPI.HasComponent<ChunkVoxelData>(entity))
                 {
-                    SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
-                    SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
-                    if (SystemAPI.HasComponent<ChunkVoxelData>(entity))
-                    {
-                        var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
-                        chunkVoxelData.Dispose();
-                        SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
-                    }
+                    var chunkVoxelData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
+                    chunkVoxelData.Dispose();
+                    SystemAPI.SetComponentEnabled<ChunkVoxelData>(entity, false);
                 }
-                else
-                {
-                    SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
-                }
+            }
+            else
+            {
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
             }
         }
 
@@ -268,15 +269,15 @@ public partial class TerrainReadbackSystem : SystemBase
     [BurstCompile]
     private struct CopyDataJob : IJob
     {
-        [ReadOnly] public NativeSlice<Voxel> Source;
-        [WriteOnly] public NativeArray<Voxel> Destination;
+        [ReadOnly] public NativeSlice<VoxelData> Source;
+        [WriteOnly] public NativeArray<VoxelData> Destination;
         public void Execute() => Source.CopyTo(Destination);
     }
 
     [BurstCompile]
     private struct CountSignsJob : IJob
     {
-        [ReadOnly] public NativeArray<Voxel> Voxels;
+        [ReadOnly] public NativeArray<VoxelData> Voxels;
         [WriteOnly] public NativeArray<int> Counter;
         public void Execute()
         {
@@ -285,7 +286,7 @@ public partial class TerrainReadbackSystem : SystemBase
             {
                 signSum += Voxels[i].Density > 0 ? 1 : -1;
             }
-            Counter[0] = signSum; // [修复]
+            Counter[0] = signSum;
         }
     }
 
@@ -296,7 +297,7 @@ public partial class TerrainReadbackSystem : SystemBase
         [WriteOnly] public NativeSlice<int> CounterDest;
         public void Execute()
         {
-            CounterDest[0] = CounterSource[0]; // [修复]
+            CounterDest[0] = CounterSource[0];
         }
     }
 }

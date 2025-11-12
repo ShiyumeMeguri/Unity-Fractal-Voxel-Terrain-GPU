@@ -22,9 +22,9 @@ namespace OptIn.Voxel.Meshing
 
                 for (int i = 0; i < faceArea; i++)
                 {
-                    uint2 flattened = (uint2)VoxelUtil.To3DIndex(i, new int3(PaddedChunkSize.x, PaddedChunkSize.y, 1)).xy;
-                    uint3 position = VoxelUtil.UnflattenFromFaceRelative(flattened, face % 3, missing);
-                    int srcIndex = SourceVertexIndices[VoxelUtil.To1DIndex(position, PaddedChunkSize)];
+                    uint2 flattened = (uint2)VoxelUtils.To3DIndex(i, new int3(PaddedChunkSize.x, PaddedChunkSize.y, 1)).xy;
+                    uint3 position = VoxelUtils.UnflattenFromFaceRelative(flattened, face % 3, missing);
+                    int srcIndex = SourceVertexIndices[VoxelUtils.To1DIndex(position, PaddedChunkSize)];
 
                     SkirtVertexIndicesCopied[i + faceElementOffset] = srcIndex;
                 }

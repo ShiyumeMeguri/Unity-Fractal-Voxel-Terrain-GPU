@@ -77,7 +77,7 @@ public partial struct ChunkManagerSystem : ISystem
         if (!SystemAPI.TryGetSingletonEntity<PlayerTag>(out var playerEntity)) return;
         var playerPos = SystemAPI.GetComponent<LocalToWorld>(playerEntity).Position;
         var config = SystemAPI.GetSingleton<TerrainConfig>();
-        var playerChunkPos = VoxelUtil.WorldToChunk(playerPos, config.ChunkSize);
+        var playerChunkPos = VoxelUtils.WorldToChunk(playerPos, config.ChunkSize);
 
         if (math.all(playerChunkPos == m_LastPlayerChunkPos))
         {
@@ -160,7 +160,7 @@ public partial struct ChunkManagerSystem : ISystem
             BitField32 neighbourMask = default;
             for (int i = 0; i < 27; i++)
             {
-                int3 offset = VoxelUtil.To3DIndex(i, new int3(3, 3, 3));
+                int3 offset = VoxelUtils.To3DIndex(i, new int3(3, 3, 3));
                 int3 neighbourPos = chunk.Position + offset - 1;
                 if (ChunkMap.ContainsKey(neighbourPos))
                 {
@@ -180,7 +180,7 @@ public partial struct ChunkManagerSystem : ISystem
         {
             if (!inputMask.IsSet(i))
             {
-                int3 offset = VoxelUtil.To3DIndex(i, new int3(3, 3, 3));
+                int3 offset = VoxelUtils.To3DIndex(i, new int3(3, 3, 3));
                 byte backing = 0;
                 BitUtils.SetBit(ref backing, 0, offset.x == 0);
                 BitUtils.SetBit(ref backing, 1, offset.y == 0);

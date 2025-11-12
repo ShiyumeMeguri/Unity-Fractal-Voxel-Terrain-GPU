@@ -28,7 +28,7 @@ public struct TerrainSkirtLinkedParent : IComponentData
 
 public struct ChunkVoxelData : IComponentData, IEnableableComponent, IDisposable
 {
-    public NativeArray<Voxel> Voxels;
+    public NativeArray<VoxelData> Voxels;
     public JobHandle AsyncWriteJobHandle;
     public JobHandle AsyncReadJobHandle;
 
@@ -37,7 +37,7 @@ public struct ChunkVoxelData : IComponentData, IEnableableComponent, IDisposable
     public ChunkVoxelData(int3 paddedSize, Allocator allocator)
     {
         int count = paddedSize.x * paddedSize.y * paddedSize.z;
-        Voxels = new NativeArray<Voxel>(count, allocator, NativeArrayOptions.UninitializedMemory);
+        Voxels = new NativeArray<VoxelData>(count, allocator, NativeArrayOptions.UninitializedMemory);
         AsyncWriteJobHandle = default;
         AsyncReadJobHandle = default;
     }
