@@ -1,11 +1,10 @@
 ﻿using System;
 using System.Collections;
 using System.Runtime.InteropServices;
-using Tuntenfisch.Extensions;
-using Tuntenfisch.Generics;
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Rendering; // 添加 using
 
 [StructLayout(LayoutKind.Sequential)]
 public struct GPUVertex
@@ -14,54 +13,48 @@ public struct GPUVertex
     public float3 normal;
     public float4 uv;
 }
+
 public class GPUMeshData : IDisposable
 {
-    // GPU 计算生成的数据缓冲区
-    public AsyncComputeBuffer vertexBuffer;   // RWStructuredBuffer<GPUVertex>
-    public AsyncComputeBuffer indexBuffer;    // RWStructuredBuffer<uint>
-    public AsyncComputeBuffer counterBuffer;  // 用于计数生成的面数（Counter 类型）
+    public ComputeBuffer vertexBuffer;
+    public ComputeBuffer indexBuffer;
+    public ComputeBuffer counterBuffer;
 
     public int faceCount;
 
-    int maxVertices;
-    int maxIndices;
+    private int m_MaxVertices;
+    private int m_MaxIndices;
 
     public GPUMeshData(int3 chunkSize)
     {
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
         int maxFaces = numVoxels * 6;
-        maxVertices = maxFaces * 4;
-        maxIndices = maxFaces * 6;
+        m_MaxVertices = maxFaces * 4;
+        m_MaxIndices = maxFaces * 6;
 
-        vertexBuffer = new AsyncComputeBuffer(maxVertices, Marshal.SizeOf(typeof(GPUVertex)), ComputeBufferType.Structured);
-        indexBuffer = new AsyncComputeBuffer(maxIndices, sizeof(uint), ComputeBufferType.Structured);
-        // 创建单元素计数器缓冲区
-        counterBuffer = new AsyncComputeBuffer(1, sizeof(uint), ComputeBufferType.Counter);
+        vertexBuffer = new ComputeBuffer(m_MaxVertices, Marshal.SizeOf(typeof(GPUVertex)), ComputeBufferType.Structured);
+        indexBuffer = new ComputeBuffer(m_MaxIndices, sizeof(uint), ComputeBufferType.Structured);
+        counterBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Counter);
     }
 
-    /// <summary>
-    /// 根据传入的 ComputeShader 生成网格数据，逻辑与 CPU 版完全一致。
-    /// 要求 ComputeShader 包含内核 ClearCounter 与 CSMain。
-    /// </summary>
     public IEnumerator Generate(ComputeShader meshComputeShader, ComputeBuffer voxelBuffer, int3 chunkPosition, int3 chunkSize, int2 atlasSize)
     {
-        // ① 清零 counterBuffer：使用 ClearCounter 内核
         int clearKernel = meshComputeShader.FindKernel("ClearCounter");
         if (clearKernel < 0)
         {
-            Debug.LogError("未能找到清零计数器的内核 ClearCounter！");
+            Debug.LogError("Could not find ClearCounter kernel!");
             yield break;
         }
         meshComputeShader.SetBuffer(clearKernel, "counterBuffer", counterBuffer);
         meshComputeShader.Dispatch(clearKernel, 1, 1, 1);
 
-        // ② 设置 CSMain 内核参数
         int kernel = meshComputeShader.FindKernel("CSMain");
         if (kernel < 0)
         {
-            Debug.LogError("未能找到 GPU Mesh 生成的 ComputeShader 内核 CSMain！");
+            Debug.LogError("Could not find CSMain kernel for GPU Meshing!");
             yield break;
         }
+
         meshComputeShader.SetBuffer(kernel, "voxelBuffer", voxelBuffer);
         meshComputeShader.SetBuffer(kernel, "vertexBuffer", vertexBuffer);
         meshComputeShader.SetBuffer(kernel, "indexBuffer", indexBuffer);
@@ -70,26 +63,31 @@ public class GPUMeshData : IDisposable
         meshComputeShader.SetInts("chunkSize", chunkSize.x, chunkSize.y, chunkSize.z);
         meshComputeShader.SetInts("_AtlasSize", atlasSize.x, atlasSize.y);
 
-        // 拓展函数 自动根据线程计算group数量 
-        meshComputeShader.Dispatch(kernel, chunkSize);
+        uint x, y, z;
+        meshComputeShader.GetKernelThreadGroupSizes(kernel, out x, out y, out z);
+        int3 groups = new int3(
+            Mathf.CeilToInt((float)chunkSize.x / x),
+            Mathf.CeilToInt((float)chunkSize.y / y),
+            Mathf.CeilToInt((float)chunkSize.z / z)
+        );
+        meshComputeShader.Dispatch(kernel, groups.x, groups.y, groups.z);
 
-        // ⑤ 按照 AsyncComputeBuffer 回读流程获取生成的面数
-        NativeArray<int> counterData = new NativeArray<int>(1, Allocator.Persistent);
-        counterBuffer.StartReadbackNonAlloc(ref counterData, 1);
-        while (!counterBuffer.IsDataAvailable())
-            yield return null;
-        counterBuffer.EndReadback();
+        var request = AsyncGPUReadback.Request(counterBuffer);
+        yield return new WaitUntil(() => request.done);
 
-        faceCount = counterData[0];
-        counterData.Dispose();
+        if (request.hasError)
+        {
+            Debug.LogError("GPU readback error for mesh counter.");
+            yield break;
+        }
 
-        yield break;
+        faceCount = request.GetData<int>()[0];
     }
 
     public void Dispose()
     {
-        if (vertexBuffer != null) vertexBuffer.Release();
-        if (indexBuffer != null) indexBuffer.Release();
-        if (counterBuffer != null) counterBuffer.Release();
+        vertexBuffer?.Release();
+        indexBuffer?.Release();
+        counterBuffer?.Release();
     }
 }

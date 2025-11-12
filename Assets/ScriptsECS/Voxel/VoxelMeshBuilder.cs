@@ -1,6 +1,4 @@
-﻿// Assets/ScriptsECS/Voxel/VoxelMeshBuilder.cs
-
-using OptIn.Voxel;
+﻿using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -29,7 +27,7 @@ public static class VoxelMeshBuilder
     {
         public NativeArray<GPUVertex> nativeVertices;
         public NativeArray<int> nativeIndices;
-        public NativeArray<int> vertexIndices; // Added for skirt generation dependency
+        public NativeArray<int> vertexIndices;
         public NativeCounter counter;
 
         public NativeMeshData(int3 paddedChunkSize)
@@ -210,7 +208,7 @@ public static class VoxelMeshBuilder
             vertices[vertexStart + i] = new GPUVertex
             {
                 position = pos + gridPosition,
-                normal = VoxelUtil.VoxelDirectionOffsets[direction],
+                normal = (float3)VoxelUtil.VoxelDirectionOffsets[direction],
                 uv = new float4(VoxelUtil.CubeUVs[i].x * width, VoxelUtil.CubeUVs[i].y * height, atlasPosition.x, atlasPosition.y)
             };
         }

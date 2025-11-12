@@ -4,65 +4,69 @@ using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Collections.LowLevel.Unsafe;
 using OptIn.Voxel;
-using Tuntenfisch.Generics;
-using Tuntenfisch.Extensions;
+using UnityEngine.Rendering; // 添加 using
 
 public class GPUVoxelData : System.IDisposable
 {
-    private int3 currentChunkSize;
-    private AsyncComputeBuffer _asyncVoxelBuffer;
-    public AsyncComputeBuffer asyncVoxelBuffer => _asyncVoxelBuffer;
+    private int3 m_CurrentChunkSize;
+    private ComputeBuffer m_VoxelBuffer;
+    public ComputeBuffer VoxelBuffer => m_VoxelBuffer;
 
     public GPUVoxelData(int3 initialChunkSize)
     {
-        currentChunkSize = initialChunkSize;
-        AllocateBuffer(currentChunkSize);
+        m_CurrentChunkSize = initialChunkSize;
+        AllocateBuffer(m_CurrentChunkSize);
     }
 
     private void AllocateBuffer(int3 size)
     {
         int numVoxels = size.x * size.y * size.z;
         int voxelSize = UnsafeUtility.SizeOf<Voxel>();
-        _asyncVoxelBuffer?.Release();
-        _asyncVoxelBuffer = new AsyncComputeBuffer(numVoxels, voxelSize, ComputeBufferType.Default);
+        m_VoxelBuffer?.Release();
+        m_VoxelBuffer = new ComputeBuffer(numVoxels, voxelSize, ComputeBufferType.Default);
     }
 
     public IEnumerator Generate(Voxel[] voxels, int3 chunkPosition, int3 newChunkSize, ComputeShader computeShader)
     {
-        if (!newChunkSize.Equals(currentChunkSize))
+        if (!newChunkSize.Equals(m_CurrentChunkSize))
         {
-            currentChunkSize = newChunkSize;
-            AllocateBuffer(currentChunkSize);
+            m_CurrentChunkSize = newChunkSize;
+            AllocateBuffer(m_CurrentChunkSize);
         }
 
-        int numVoxels = newChunkSize.x * newChunkSize.y * newChunkSize.z;
         int kernel = computeShader.FindKernel("CSMain");
         if (kernel < 0)
         {
-            Debug.LogError("未能找到 ComputeShader 内核 CSMain！");
+            Debug.LogError("Could not find CSMain kernel!");
             yield break;
         }
 
-        computeShader.SetBuffer(kernel, "asyncVoxelBuffer", _asyncVoxelBuffer);
+        computeShader.SetBuffer(kernel, "asyncVoxelBuffer", m_VoxelBuffer);
         computeShader.SetInts("chunkPosition", chunkPosition.x, chunkPosition.y, chunkPosition.z);
         computeShader.SetInts("chunkSize", newChunkSize.x, newChunkSize.y, newChunkSize.z);
-        int3 threadGroupSize = new int3(8);  // 匹配 HLSL numthreads
-        int3 groups = (newChunkSize + threadGroupSize - 1) / threadGroupSize;  // ceil(34/4)=9
+
+        uint tx, ty, tz;
+        computeShader.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
+        int3 threadGroupSize = new int3((int)tx, (int)ty, (int)tz);
+        int3 groups = (newChunkSize + threadGroupSize - 1) / threadGroupSize;
         computeShader.Dispatch(kernel, groups.x, groups.y, groups.z);
 
-        var nativeData = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);
-        _asyncVoxelBuffer.StartReadbackNonAlloc(ref nativeData, numVoxels);
+        var request = AsyncGPUReadback.Request(m_VoxelBuffer);
+        yield return new WaitUntil(() => request.done);
 
-        while (!_asyncVoxelBuffer.IsDataAvailable())
-            yield return null;
-        _asyncVoxelBuffer.EndReadback();
+        if (request.hasError)
+        {
+            Debug.LogError("GPU readback error for voxel data.");
+            yield break;
+        }
 
-        CopyNativeDataToManaged(voxels, nativeData, numVoxels);
-        nativeData.Dispose();
+        var nativeData = request.GetData<Voxel>();
+        CopyNativeDataToManaged(voxels, nativeData, nativeData.Length);
     }
 
     private static unsafe void CopyNativeDataToManaged(Voxel[] voxels, NativeArray<Voxel> nativeData, int numVoxels)
     {
+        if (voxels.Length < numVoxels) return;
         fixed (Voxel* dest = voxels)
         {
             UnsafeUtility.MemCpy(dest, NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(nativeData), numVoxels * (long)UnsafeUtility.SizeOf<Voxel>());
@@ -71,7 +75,7 @@ public class GPUVoxelData : System.IDisposable
 
     public void Dispose()
     {
-        _asyncVoxelBuffer?.Release();
-        _asyncVoxelBuffer = null;
+        m_VoxelBuffer?.Release();
+        m_VoxelBuffer = null;
     }
 }

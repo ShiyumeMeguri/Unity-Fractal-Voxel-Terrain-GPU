@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
+using OptIn.Voxel; // 添加 using
 
 namespace OptIn.Voxel.Meshing
 {
