@@ -14,13 +14,20 @@ using UnityEngine.Rendering;
 [UpdateAfter(typeof(ChunkManagerSystem))]
 public partial class TerrainReadbackSystem : SystemBase
 {
-    private bool m_IsFree;
+    private enum State
+    {
+        Idle,
+        AwaitingDispatch,
+        AwaitingReadback
+    }
+
+    private State m_State;
     private List<Entity> m_Entities;
-    private JobHandle? m_PendingCopies;
+    private JobHandle m_PendingCopies;
     private ComputeBuffer m_VoxelBuffer;
     private NativeArray<Voxel> m_ReadbackData;
-    private bool m_ReadbackInProgress;
-    private bool m_IsInitialized; // 新增初始化标志
+    private bool m_IsInitialized;
+    private AsyncGPUReadbackRequest m_ReadbackRequest;
 
     private const int BATCH_SIZE = 8;
 
@@ -31,8 +38,8 @@ public partial class TerrainReadbackSystem : SystemBase
         RequireForUpdate<TerrainChunkRequestReadbackTag>();
 
         m_Entities = new List<Entity>(BATCH_SIZE);
-        m_IsFree = true;
-        m_IsInitialized = false; // 初始化为 false
+        m_State = State.Idle;
+        m_IsInitialized = false;
     }
 
     private void Initialize(TerrainConfig config)
@@ -47,46 +54,50 @@ public partial class TerrainReadbackSystem : SystemBase
         }
         else
         {
-            Enabled = false; // 如果配置无效，则禁用系统
+            Enabled = false;
         }
+        m_IsInitialized = true;
     }
 
     protected override void OnDestroy()
     {
-        m_PendingCopies?.Complete();
+        m_PendingCopies.Complete();
         AsyncGPUReadback.WaitAllRequests();
         if (m_ReadbackData.IsCreated) m_ReadbackData.Dispose();
         m_VoxelBuffer?.Release();
     }
 
+    // [修复] 重新添加 ResetState 方法
     private void ResetState()
     {
-        m_IsFree = true;
+        m_State = State.Idle;
         m_Entities.Clear();
-        m_PendingCopies = null;
-        m_ReadbackInProgress = false;
+        m_PendingCopies = default;
     }
+
 
     protected override void OnUpdate()
     {
-        // 首次更新时执行初始化
         if (!m_IsInitialized)
         {
             var config = SystemAPI.GetSingleton<TerrainConfig>();
             Initialize(config);
-            m_IsInitialized = true;
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.ReadbackSystemReady = m_IsFree;
+        readySystems.ReadbackSystemReady = (m_State == State.Idle);
 
-        if (m_IsFree)
+        switch (m_State)
         {
-            TryBeginReadback();
-        }
-        else
-        {
-            TryCheckIfReadbackComplete();
+            case State.Idle:
+                TryBeginReadback();
+                break;
+            case State.AwaitingDispatch:
+                m_State = State.AwaitingReadback;
+                break;
+            case State.AwaitingReadback:
+                TryCheckAndProcessReadback();
+                break;
         }
     }
 
@@ -107,12 +118,20 @@ public partial class TerrainReadbackSystem : SystemBase
         int numToProcess = math.min(BATCH_SIZE, entitiesArray.Length);
         if (numToProcess == 0) return;
 
-        m_IsFree = false;
+        m_State = State.AwaitingDispatch;
         m_Entities.Clear();
 
         var cmd = CommandBufferPool.Get("Voxel Generation Dispatch");
         var compute = resources.VoxelComputeShader;
         int kernel = compute.FindKernel("CSMain");
+        if (kernel == -1)
+        {
+            Debug.LogError("VoxelCompute.compute: Kernel CSMain is invalid. Check for shader compilation errors.");
+            CommandBufferPool.Release(cmd);
+            m_State = State.Idle;
+            return;
+        }
+
         var threadGroupSize = new int3(8, 8, 8);
         var groups = (paddedChunkSize + threadGroupSize - 1) / threadGroupSize;
 
@@ -136,29 +155,27 @@ public partial class TerrainReadbackSystem : SystemBase
         Graphics.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
 
-        m_ReadbackInProgress = true;
-        AsyncGPUReadback.Request(m_VoxelBuffer, OnReadbackComplete);
+        m_ReadbackRequest = AsyncGPUReadback.Request(m_VoxelBuffer);
     }
 
-    private void OnReadbackComplete(AsyncGPUReadbackRequest request)
+    private void TryCheckAndProcessReadback()
     {
-        if (m_IsFree || World == null || !World.IsCreated) return;
+        if (!m_ReadbackRequest.done) return;
 
-        if (request.hasError)
+        if (m_ReadbackRequest.hasError)
         {
             Debug.LogError("GPU Readback Error.");
             ResetState();
             return;
         }
 
-        request.GetData<Voxel>().CopyTo(m_ReadbackData);
+        m_ReadbackRequest.GetData<Voxel>().CopyTo(m_ReadbackData);
 
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
+        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(World.Unmanaged);
         var jobHandles = new NativeArray<JobHandle>(m_Entities.Count, Allocator.Temp);
-        var ecbSingleton = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>();
-        var ecb = ecbSingleton.CreateCommandBuffer(World.Unmanaged);
 
         for (int i = 0; i < m_Entities.Count; i++)
         {
@@ -170,7 +187,6 @@ public partial class TerrainReadbackSystem : SystemBase
             ecb.SetComponentEnabled<ChunkVoxelData>(entity, true);
 
             var slice = m_ReadbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
-
             var copyJob = new CopyDataJob { Source = slice, Destination = chunkData.Voxels };
             var copyHandle = copyJob.Schedule(Dependency);
 
@@ -190,21 +206,10 @@ public partial class TerrainReadbackSystem : SystemBase
         }
 
         m_PendingCopies = JobHandle.CombineDependencies(jobHandles);
-        Dependency = JobHandle.CombineDependencies(Dependency, m_PendingCopies.Value);
+        Dependency = m_PendingCopies;
         jobHandles.Dispose();
 
-        m_ReadbackInProgress = false;
-    }
-
-    private void TryCheckIfReadbackComplete()
-    {
-        if (m_ReadbackInProgress) return;
-
-        if (m_PendingCopies.HasValue && m_PendingCopies.Value.IsCompleted)
-        {
-            m_PendingCopies.Value.Complete();
-            ResetState();
-        }
+        ResetState();
     }
 
     [BurstCompile]

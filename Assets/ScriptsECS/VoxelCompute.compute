@@ -10,7 +10,7 @@ RWStructuredBuffer<Voxel> asyncVoxelBuffer;
 
 int3 chunkPosition;
 uint3 chunkSize;
-uint baseIndex; // [新增] 用于指定写入缓冲区的起始索引
+uint baseIndex;
 
 float4 _QuaternionJuliaC;
 float _QuaternionJuliaPosW;
@@ -19,7 +19,8 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
 {
     float minDistance = 99999;
     float3 kleinianPos;
-    float4 mandelbrotPos;
+    // [修复] 初始化 mandelbrotPos
+    float4 mandelbrotPos = float4(0, 0, 0, 0); 
     minDistance = min(minDistance, KleinianDE(fractalPos * sqrt(length(mandelbrotPos.xy)), minFractalPos, maxFractalPos, kleinianPos));
     return minDistance;
 }
@@ -55,6 +56,5 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         metadata = (int) (density * 32767.0);
     }
     
-    // [修改] 使用 baseIndex 计算最终写入位置
     asyncVoxelBuffer[baseIndex + index].packedData = ((uint) metadata << 16) | ((uint) voxelID & 0x0000FFFF);
 }
