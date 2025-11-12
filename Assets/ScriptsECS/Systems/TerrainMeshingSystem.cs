@@ -17,11 +17,11 @@ using UnityEngine.Rendering;
 [UpdateAfter(typeof(TerrainReadbackSystem))]
 public partial class TerrainMeshingSystem : SystemBase
 {
-    private List<MeshJobHandler> m_Handlers;
-    private EntitiesGraphicsSystem m_GraphicsSystem;
-    private BatchMaterialID m_MainMeshMaterialID;
-    private BatchMaterialID m_SkirtMeshMaterialID;
-    private bool m_IsInitialized;
+    private List<MeshJobHandler> _Handlers;
+    private EntitiesGraphicsSystem _GraphicsSystem;
+    private BatchMaterialID _MainMeshMaterialID;
+    private BatchMaterialID _SkirtMeshMaterialID;
+    private bool _IsInitialized;
 
     private static readonly RenderMeshDescription RenderMeshDescription = new RenderMeshDescription(ShadowCastingMode.On, receiveShadows: true);
 
@@ -29,22 +29,22 @@ public partial class TerrainMeshingSystem : SystemBase
     {
         RequireForUpdate<TerrainMesherConfig>();
         RequireForUpdate<TerrainResources>();
-        m_GraphicsSystem = World.GetOrCreateSystemManaged<EntitiesGraphicsSystem>();
+        _GraphicsSystem = World.GetOrCreateSystemManaged<EntitiesGraphicsSystem>();
     }
 
     protected override void OnUpdate()
     {
         if (!SystemAPI.TryGetSingleton<TerrainMesherConfig>(out var mesherConfig)) return;
 
-        if (!m_IsInitialized)
+        if (!_IsInitialized)
         {
             Initialize(mesherConfig);
         }
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.MeshingSystemReady = m_Handlers.All(h => h.IsFree);
+        readySystems.MeshingSystemReady = _Handlers.All(h => h.IsFree);
 
-        foreach (var handler in m_Handlers)
+        foreach (var handler in _Handlers)
         {
             if (handler.IsComplete(EntityManager))
             {
@@ -60,7 +60,7 @@ public partial class TerrainMeshingSystem : SystemBase
             );
         if (query.IsEmpty) return;
 
-        var freeHandlers = m_Handlers.Where(h => h.IsFree).ToArray();
+        var freeHandlers = _Handlers.Where(h => h.IsFree).ToArray();
         int numToProcess = math.min(freeHandlers.Length, query.CalculateEntityCount());
         if (numToProcess == 0) return;
 
@@ -83,22 +83,22 @@ public partial class TerrainMeshingSystem : SystemBase
         var terrainConfig = SystemAPI.GetSingleton<TerrainConfig>();
         var resources = SystemAPI.ManagedAPI.GetSingleton<TerrainResources>();
 
-        m_Handlers = new List<MeshJobHandler>(mesherConfig.MeshJobsPerTick);
+        _Handlers = new List<MeshJobHandler>(mesherConfig.MeshJobsPerTick);
         for (int i = 0; i < mesherConfig.MeshJobsPerTick; i++)
         {
             var handler = new MeshJobHandler();
             handler.Init(terrainConfig);
-            m_Handlers.Add(handler);
+            _Handlers.Add(handler);
         }
 
         var skirtMaterial = new Material(resources.ChunkMaterial);
         // You might need a special shader variant for skirts
         // skirtMaterial.EnableKeyword("_SKIRT_ON"); 
 
-        m_MainMeshMaterialID = m_GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
-        m_SkirtMeshMaterialID = m_GraphicsSystem.RegisterMaterial(skirtMaterial);
+        _MainMeshMaterialID = _GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
+        _SkirtMeshMaterialID = _GraphicsSystem.RegisterMaterial(skirtMaterial);
 
-        m_IsInitialized = true;
+        _IsInitialized = true;
     }
 
     private void FinishJob(MeshJobHandler handler)
@@ -127,11 +127,11 @@ public partial class TerrainMeshingSystem : SystemBase
                 return;
             }
 
-            var meshID = m_GraphicsSystem.RegisterMesh(mesh);
+            var meshID = _GraphicsSystem.RegisterMesh(mesh);
 
             var mainMaterialMeshInfo = new MaterialMeshInfo
             {
-                MaterialID = m_MainMeshMaterialID,
+                MaterialID = _MainMeshMaterialID,
                 MeshID = meshID,
                 SubMesh = 0
             };
@@ -152,7 +152,7 @@ public partial class TerrainMeshingSystem : SystemBase
 
                 var skirtMaterialMeshInfo = new MaterialMeshInfo
                 {
-                    MaterialID = m_SkirtMeshMaterialID,
+                    MaterialID = _SkirtMeshMaterialID,
                     MeshID = meshID,
                     SubMesh = (ushort)(i + 1)
                 };
@@ -186,9 +186,9 @@ public partial class TerrainMeshingSystem : SystemBase
 
     protected override void OnDestroy()
     {
-        if (m_Handlers != null)
+        if (_Handlers != null)
         {
-            foreach (var handler in m_Handlers)
+            foreach (var handler in _Handlers)
                 handler.Dispose();
         }
     }

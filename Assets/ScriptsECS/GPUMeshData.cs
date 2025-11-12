@@ -22,18 +22,18 @@ public class GPUMeshData : IDisposable
 
     public int faceCount;
 
-    private int m_MaxVertices;
-    private int m_MaxIndices;
+    private int _MaxVertices;
+    private int _MaxIndices;
 
     public GPUMeshData(int3 chunkSize)
     {
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
         int maxFaces = numVoxels * 6;
-        m_MaxVertices = maxFaces * 4;
-        m_MaxIndices = maxFaces * 6;
+        _MaxVertices = maxFaces * 4;
+        _MaxIndices = maxFaces * 6;
 
-        vertexBuffer = new ComputeBuffer(m_MaxVertices, Marshal.SizeOf(typeof(GPUVertex)), ComputeBufferType.Structured);
-        indexBuffer = new ComputeBuffer(m_MaxIndices, sizeof(uint), ComputeBufferType.Structured);
+        vertexBuffer = new ComputeBuffer(_MaxVertices, Marshal.SizeOf(typeof(GPUVertex)), ComputeBufferType.Structured);
+        indexBuffer = new ComputeBuffer(_MaxIndices, sizeof(uint), ComputeBufferType.Structured);
         counterBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Counter);
     }
 

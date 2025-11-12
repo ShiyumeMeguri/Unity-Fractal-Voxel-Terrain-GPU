@@ -8,15 +8,15 @@ using Unity.Mathematics;
 [BurstCompile]
 public partial struct VoxelEditSystem : ISystem
 {
-    private EntityQuery m_ChunkQuery;
-    private EntityQuery m_EditRequestQuery;
+    private EntityQuery _ChunkQuery;
+    private EntityQuery _EditRequestQuery;
 
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        m_ChunkQuery = state.GetEntityQuery(typeof(Chunk), typeof(TerrainChunkVoxels));
-        m_EditRequestQuery = state.GetEntityQuery(typeof(VoxelEditRequest));
-        state.RequireForUpdate(m_EditRequestQuery);
+        _ChunkQuery = state.GetEntityQuery(typeof(Chunk), typeof(TerrainChunkVoxels));
+        _EditRequestQuery = state.GetEntityQuery(typeof(VoxelEditRequest));
+        state.RequireForUpdate(_EditRequestQuery);
         state.RequireForUpdate<TerrainConfig>();
     }
 
@@ -26,9 +26,9 @@ public partial struct VoxelEditSystem : ISystem
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         var ecb = new EntityCommandBuffer(Allocator.Temp);
 
-        var chunkMap = new NativeHashMap<int3, Entity>(m_ChunkQuery.CalculateEntityCount(), Allocator.Temp);
-        using (var entities = m_ChunkQuery.ToEntityArray(Allocator.Temp))
-        using (var chunks = m_ChunkQuery.ToComponentDataArray<Chunk>(Allocator.Temp))
+        var chunkMap = new NativeHashMap<int3, Entity>(_ChunkQuery.CalculateEntityCount(), Allocator.Temp);
+        using (var entities = _ChunkQuery.ToEntityArray(Allocator.Temp))
+        using (var chunks = _ChunkQuery.ToComponentDataArray<Chunk>(Allocator.Temp))
         {
             for (int i = 0; i < entities.Length; i++)
             {

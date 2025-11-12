@@ -28,7 +28,7 @@
         struct Input
         {
             float3 position;
-            float4 custom_uv;
+            float4 custo_uv;
             float4 color : COLOR;
         };
 
@@ -54,7 +54,7 @@
         void vert (inout appdata_full v, out Input o)
         {
             UNITY_INITIALIZE_OUTPUT(Input, o);
-            o.custom_uv = v.texcoord;
+            o.custo_uv = v.texcoord;
             o.position = v.vertex;
             
             
@@ -64,8 +64,8 @@
 
         void surf (Input IN, inout SurfaceOutputStandard o)
         {                 
-            fixed2 atlasOffset = IN.custom_uv.zw;
-            fixed2 scaledUV = IN.custom_uv.xy;
+            fixed2 atlasOffset = IN.custo_uv.zw;
+            fixed2 scaledUV = IN.custo_uv.xy;
             fixed2 atlasUV = scaledUV;
             atlasUV.x = (atlasOffset.x * _AtlasRec.x) + frac(atlasUV.x) * _AtlasRec.x;
             atlasUV.y = (((_AtlasY - 1) - atlasOffset.y) * _AtlasRec.y) + frac(atlasUV.y) * _AtlasRec.y;

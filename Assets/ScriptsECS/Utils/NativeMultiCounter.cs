@@ -12,45 +12,45 @@ namespace OptIn.Voxel.Meshing
     public unsafe struct NativeMultiCounter : IDisposable
     {
         [NativeDisableUnsafePtrRestriction]
-        private int* m_Counters;
-        private int m_Capacity;
-        private Allocator m_AllocatorLabel;
+        private int* _Counters;
+        private int _Capacity;
+        private Allocator _AllocatorLabel;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-        private AtomicSafetyHandle m_Safety;
+        private AtomicSafetyHandle _Safety;
         [NativeSetClassTypeToNullOnSchedule]
-        private DisposeSentinel m_DisposeSentinel;
+        private DisposeSentinel _DisposeSentinel;
 #endif
 
         public NativeMultiCounter(int capacity, Allocator label)
         {
-            m_AllocatorLabel = label;
-            m_Capacity = capacity;
+            _AllocatorLabel = label;
+            _Capacity = capacity;
             int sizeOfInt = UnsafeUtility.SizeOf<int>();
-            m_Counters = (int*)UnsafeUtility.Malloc(sizeOfInt * capacity, 4, label);
-            UnsafeUtility.MemClear(m_Counters, sizeOfInt * capacity);
+            _Counters = (int*)UnsafeUtility.Malloc(sizeOfInt * capacity, 4, label);
+            UnsafeUtility.MemClear(_Counters, sizeOfInt * capacity);
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Create(out m_Safety, out m_DisposeSentinel, 0, label);
+            DisposeSentinel.Create(out _Safety, out _DisposeSentinel, 0, label);
 #endif
         }
 
         public int Sum()
         {
             int sum = 0;
-            for (int i = 0; i < m_Capacity; i++)
+            for (int i = 0; i < _Capacity; i++)
             {
-                sum += m_Counters[i];
+                sum += _Counters[i];
             }
             return sum;
         }
         
         public int[] ToArray()
         {
-            int[] arr = new int[m_Capacity];
-            for(int i = 0; i < m_Capacity; i++)
+            int[] arr = new int[_Capacity];
+            for(int i = 0; i < _Capacity; i++)
             {
-                arr[i] = m_Counters[i];
+                arr[i] = _Counters[i];
             }
             return arr;
         }
@@ -59,30 +59,30 @@ namespace OptIn.Voxel.Meshing
         public void Reset()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
 #endif
-            UnsafeUtility.MemClear(m_Counters, UnsafeUtility.SizeOf<int>() * m_Capacity);
+            UnsafeUtility.MemClear(_Counters, UnsafeUtility.SizeOf<int>() * _Capacity);
         }
 
         public void Dispose()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Dispose(ref m_Safety, ref m_DisposeSentinel);
+            DisposeSentinel.Dispose(ref _Safety, ref _DisposeSentinel);
 #endif
-            UnsafeUtility.Free(m_Counters, m_AllocatorLabel);
-            m_Counters = null;
+            UnsafeUtility.Free(_Counters, _AllocatorLabel);
+            _Counters = null;
         }
 
         public Concurrent ToConcurrent()
         {
             Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
-            concurrent.m_Safety = m_Safety;
-            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent.m_Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+            concurrent._Safety = _Safety;
+            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent._Safety);
 #endif
-            concurrent.m_Counters = m_Counters;
-            concurrent.m_Capacity = m_Capacity;
+            concurrent._Counters = _Counters;
+            concurrent._Capacity = _Capacity;
             return concurrent;
         }
 
@@ -91,35 +91,35 @@ namespace OptIn.Voxel.Meshing
         public unsafe struct Concurrent
         {
             [NativeDisableUnsafePtrRestriction]
-            internal int* m_Counters;
-            internal int m_Capacity;
+            internal int* _Counters;
+            internal int _Capacity;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            internal AtomicSafetyHandle m_Safety;
+            internal AtomicSafetyHandle _Safety;
 #endif
 
             public int Increment(int index)
             {
-                if (index >= m_Capacity || index < 0)
+                if (index >= _Capacity || index < 0)
                     throw new ArgumentOutOfRangeException(nameof(index));
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
 #endif
-                return Interlocked.Increment(ref *(m_Counters + index)) - 1;
+                return Interlocked.Increment(ref *(_Counters + index)) - 1;
             }
             
             public NativeCounter.Concurrent ToConcurrentNativeCounter(int index)
             {
-                if (index >= m_Capacity || index < 0)
+                if (index >= _Capacity || index < 0)
                     throw new ArgumentOutOfRangeException(nameof(index));
 
                 NativeCounter.Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
-                concurrent.m_Safety = m_Safety;
+                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+                concurrent._Safety = _Safety;
 #endif
 
-                concurrent.m_Counter = m_Counters + index;
+                concurrent._Counter = _Counters + index;
                 return concurrent;
             }
         }

@@ -8,12 +8,12 @@ public class VoxelController : MonoBehaviour
     [Tooltip("The ID for blocks placed with the right mouse button.")]
     [SerializeField] private short blockMaterialId = 1; // e.g., Stone
 
-    private EntityManager m_EntityManager;
+    private EntityManager _EntityManager;
 
     private void Start()
     {
         // 获取默认世界中的EntityManager
-        m_EntityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
+        _EntityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
     }
 
     void Update()
@@ -49,10 +49,10 @@ public class VoxelController : MonoBehaviour
     private void CreateEditRequest(float3 worldPosition, short voxelID)
     {
         // 创建一个实体来承载编辑请求
-        Entity requestEntity = m_EntityManager.CreateEntity();
+        Entity requestEntity = _EntityManager.CreateEntity();
         
         // 添加VoxelEditRequest组件并设置其数据
-        m_EntityManager.AddComponentData(requestEntity, new VoxelEditRequest
+        _EntityManager.AddComponentData(requestEntity, new VoxelEditRequest
         {
             Type = VoxelEditRequest.EditType.SetBlock,
             WorldPosition = worldPosition,

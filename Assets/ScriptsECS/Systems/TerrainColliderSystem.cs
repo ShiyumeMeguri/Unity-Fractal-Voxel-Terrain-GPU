@@ -10,7 +10,7 @@ using Unity.Physics;
 [BurstCompile]
 public partial struct TerrainColliderSystem : ISystem
 {
-    private NativeList<PendingBakeRequest> m_PendingRequests;
+    private NativeList<PendingBakeRequest> _PendingRequests;
 
     private struct PendingBakeRequest
     {
@@ -29,26 +29,26 @@ public partial struct TerrainColliderSystem : ISystem
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        m_PendingRequests = new NativeList<PendingBakeRequest>(Allocator.Persistent);
+        _PendingRequests = new NativeList<PendingBakeRequest>(Allocator.Persistent);
     }
 
     [BurstCompile]
     public void OnDestroy(ref SystemState state)
     {
         state.Dependency.Complete();
-        foreach (var request in m_PendingRequests)
+        foreach (var request in _PendingRequests)
         {
             request.Dispose();
         }
-        m_PendingRequests.Dispose();
+        _PendingRequests.Dispose();
     }
 
     [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
-        for (int i = m_PendingRequests.Length - 1; i >= 0; i--)
+        for (int i = _PendingRequests.Length - 1; i >= 0; i--)
         {
-            var request = m_PendingRequests[i];
+            var request = _PendingRequests[i];
             if (request.Dependency.IsCompleted)
             {
                 request.Dependency.Complete();
@@ -72,7 +72,7 @@ public partial struct TerrainColliderSystem : ISystem
                 }
 
                 request.ColliderRef.Dispose();
-                m_PendingRequests.RemoveAtSwapBack(i);
+                _PendingRequests.RemoveAtSwapBack(i);
             }
         }
 
@@ -94,7 +94,7 @@ public partial struct TerrainColliderSystem : ISystem
 
             var handle = bakeJob.Schedule(meshData.ValueRO.AccessJobHandle);
 
-            m_PendingRequests.Add(new PendingBakeRequest
+            _PendingRequests.Add(new PendingBakeRequest
             {
                 Dependency = handle,
                 Entity = entity,

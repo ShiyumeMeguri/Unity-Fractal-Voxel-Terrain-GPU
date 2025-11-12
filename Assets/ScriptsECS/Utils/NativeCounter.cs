@@ -11,15 +11,15 @@ namespace OptIn.Voxel
     public unsafe struct NativeCounter : IDisposable
     {
         [NativeDisableUnsafePtrRestriction]
-        private int* m_Counter;
+        private int* _Counter;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-        private AtomicSafetyHandle m_Safety;
+        private AtomicSafetyHandle _Safety;
         [NativeSetClassTypeToNullOnSchedule]
-        private DisposeSentinel m_DisposeSentinel;
+        private DisposeSentinel _DisposeSentinel;
 #endif
 
-        private Allocator m_AllocatorLabel;
+        private Allocator _AllocatorLabel;
 
         public NativeCounter(Allocator label)
         {
@@ -27,11 +27,11 @@ namespace OptIn.Voxel
             if (!UnsafeUtility.IsBlittable<int>())
                 throw new ArgumentException(string.Format("{0} used in NativeQueue<{0}> must be blittable", typeof(int)));
 #endif
-            m_AllocatorLabel = label;
-            m_Counter = (int*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<int>(), 4, label);
+            _AllocatorLabel = label;
+            _Counter = (int*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<int>(), 4, label);
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Create(out m_Safety, out m_DisposeSentinel, 0, label);
+            DisposeSentinel.Create(out _Safety, out _DisposeSentinel, 0, label);
 #endif
             Count = 0;
         }
@@ -41,39 +41,39 @@ namespace OptIn.Voxel
             get
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckReadAndThrow(m_Safety);
+                AtomicSafetyHandle.CheckReadAndThrow(_Safety);
 #endif
-                return *m_Counter;
+                return *_Counter;
             }
             set
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
 #endif
-                *m_Counter = value;
+                *_Counter = value;
             }
         }
 
-        public bool IsCreated => m_Counter != null;
+        public bool IsCreated => _Counter != null;
 
         public void Dispose()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Dispose(ref m_Safety, ref m_DisposeSentinel);
+            DisposeSentinel.Dispose(ref _Safety, ref _DisposeSentinel);
 #endif
-            UnsafeUtility.Free(m_Counter, m_AllocatorLabel);
-            m_Counter = null;
+            UnsafeUtility.Free(_Counter, _AllocatorLabel);
+            _Counter = null;
         }
 
         public Concurrent ToConcurrent()
         {
             Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
-            concurrent.m_Safety = m_Safety;
-            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent.m_Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+            concurrent._Safety = _Safety;
+            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent._Safety);
 #endif
-            concurrent.m_Counter = m_Counter;
+            concurrent._Counter = _Counter;
             return concurrent;
         }
 
@@ -82,26 +82,26 @@ namespace OptIn.Voxel
         public unsafe struct Concurrent
         {
             [NativeDisableUnsafePtrRestriction]
-            internal int* m_Counter;
+            internal int* _Counter;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            internal AtomicSafetyHandle m_Safety;
+            internal AtomicSafetyHandle _Safety;
 #endif
 
             public int Increment()
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
 #endif
-                return Interlocked.Increment(ref *m_Counter) - 1;
+                return Interlocked.Increment(ref *_Counter) - 1;
             }
 
             public int Add(int value)
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
 #endif
-                return Interlocked.Add(ref *m_Counter, value) - value;
+                return Interlocked.Add(ref *_Counter, value) - value;
             }
         }
     }

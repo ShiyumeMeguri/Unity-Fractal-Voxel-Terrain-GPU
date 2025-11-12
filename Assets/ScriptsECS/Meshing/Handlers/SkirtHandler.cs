@@ -21,12 +21,12 @@ namespace OptIn.Voxel.Meshing
         public NativeMultiCounter ForcedTriangleCounter;
 
         public JobHandle JobHandle;
-        private int3 m_PaddedChunkSize;
+        private int3 _PaddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            m_PaddedChunkSize = config.PaddedChunkSize;
-            int faceArea = m_PaddedChunkSize.x * m_PaddedChunkSize.y;
+            _PaddedChunkSize = config.PaddedChunkSize;
+            int faceArea = _PaddedChunkSize.x * _PaddedChunkSize.y;
             int skirtFaceArea = faceArea;
 
             WithinThreshold = new NativeArray<bool>(faceArea * 6, Allocator.Persistent);
@@ -52,7 +52,7 @@ namespace OptIn.Voxel.Meshing
             {
                 Voxels = voxels.Voxels,
                 WithinThreshold = WithinThreshold,
-                PaddedChunkSize = m_PaddedChunkSize
+                PaddedChunkSize = _PaddedChunkSize
             };
             var closestHandle = closestSurfaceJob.Schedule(FACE * 6, 64, dependency);
 
@@ -60,7 +60,7 @@ namespace OptIn.Voxel.Meshing
             {
                 SourceVertexIndices = core.MeshData.vertexIndices,
                 SkirtVertexIndicesCopied = CopiedVertexIndices,
-                PaddedChunkSize = m_PaddedChunkSize
+                PaddedChunkSize = _PaddedChunkSize
             };
             var copyHandle = copyJob.Schedule(core.JobHandle);
 
@@ -72,7 +72,7 @@ namespace OptIn.Voxel.Meshing
                 SkirtVertices = SkirtVertices,
                 SkirtVertexCounter = VertexCounter.ToConcurrent(),
                 VertexCounter = core.MeshData.counter,
-                PaddedChunkSize = m_PaddedChunkSize,
+                PaddedChunkSize = _PaddedChunkSize,
                 voxelNormals = normals.VoxelNormals // [修复] 传递法线数据
             };
             var vertexHandle = vertexJob.Schedule(SKIRT_FACE * 6, 64, JobHandle.CombineDependencies(copyHandle, closestHandle));
@@ -86,7 +86,7 @@ namespace OptIn.Voxel.Meshing
                 SkirtForcedPerFaceIndices = ForcedPerFaceIndices,
                 SkirtStitchedTriangleCounter = StitchedTriangleCounter.ToConcurrent(),
                 SkirtForcedTriangleCounter = ForcedTriangleCounter.ToConcurrent(),
-                PaddedChunkSize = m_PaddedChunkSize
+                PaddedChunkSize = _PaddedChunkSize
             };
             JobHandle = quadJob.Schedule(FACE * 6, 64, vertexHandle);
         }

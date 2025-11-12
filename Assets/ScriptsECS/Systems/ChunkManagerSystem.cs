@@ -11,16 +11,16 @@ using Unity.Transforms;
 [BurstCompile]
 public partial struct ChunkManagerSystem : ISystem
 {
-    private int3 m_LastPlayerChunkPos;
-    private Entity m_ChunkPrototype;
-    private Entity m_SkirtPrototype;
-    private NativeHashMap<int3, Entity> m_ChunkMap;
+    private int3 _LastPlayerChunkPos;
+    private Entity _ChunkPrototype;
+    private Entity _SkirtPrototype;
+    private NativeHashMap<int3, Entity> _ChunkMap;
 
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        m_LastPlayerChunkPos = new int3(int.MinValue);
-        m_ChunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
+        _LastPlayerChunkPos = new int3(int.MinValue);
+        _ChunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
 
         state.RequireForUpdate<PlayerTag>();
         state.RequireForUpdate<TerrainConfig>();
@@ -33,42 +33,42 @@ public partial struct ChunkManagerSystem : ISystem
     private void CreatePrototypes(ref SystemState state)
     {
         var mgr = state.EntityManager;
-        m_ChunkPrototype = mgr.CreateEntity();
-        mgr.AddComponent<LocalTransform>(m_ChunkPrototype); // 修复：添加 LocalTransform
-        mgr.AddComponent<LocalToWorld>(m_ChunkPrototype);
-        mgr.AddComponent<Chunk>(m_ChunkPrototype);
+        _ChunkPrototype = mgr.CreateEntity();
+        mgr.AddComponent<LocalTransform>(_ChunkPrototype); // 修复：添加 LocalTransform
+        mgr.AddComponent<LocalToWorld>(_ChunkPrototype);
+        mgr.AddComponent<Chunk>(_ChunkPrototype);
         // Do not add ChunkVoxelData here, it will be added on demand.
-        mgr.AddComponent<TerrainChunkRequestReadbackTag>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkVoxelsReadyTag>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkRequestMeshingTag>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkMesh>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkRequestCollisionTag>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkEndOfPipeTag>(m_ChunkPrototype);
-        mgr.AddComponent<TerrainDeferredVisible>(m_ChunkPrototype);
-        mgr.AddComponent<Prefab>(m_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkRequestReadbackTag>(_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkVoxelsReadyTag>(_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkRequestMeshingTag>(_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkMesh>(_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkRequestCollisionTag>(_ChunkPrototype);
+        mgr.AddComponent<TerrainChunkEndOfPipeTag>(_ChunkPrototype);
+        mgr.AddComponent<TerrainDeferredVisible>(_ChunkPrototype);
+        mgr.AddComponent<Prefab>(_ChunkPrototype);
 
-        mgr.SetComponentEnabled<TerrainChunkMesh>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkRequestMeshingTag>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkRequestCollisionTag>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkEndOfPipeTag>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainDeferredVisible>(m_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(m_ChunkPrototype, true);
+        mgr.SetComponentEnabled<TerrainChunkMesh>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkRequestMeshingTag>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkRequestCollisionTag>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkEndOfPipeTag>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainDeferredVisible>(_ChunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(_ChunkPrototype, true);
 
-        m_SkirtPrototype = mgr.CreateEntity();
-        mgr.AddComponent<LocalTransform>(m_SkirtPrototype); // 修复：添加 LocalTransform
-        mgr.AddComponent<LocalToWorld>(m_SkirtPrototype);
-        mgr.AddComponent<TerrainSkirt>(m_SkirtPrototype);
-        mgr.AddComponent<TerrainDeferredVisible>(m_SkirtPrototype);
-        mgr.AddComponent<TerrainSkirtLinkedParent>(m_SkirtPrototype);
-        mgr.AddComponent<Prefab>(m_SkirtPrototype);
-        mgr.SetComponentEnabled<TerrainDeferredVisible>(m_SkirtPrototype, false);
+        _SkirtPrototype = mgr.CreateEntity();
+        mgr.AddComponent<LocalTransform>(_SkirtPrototype); // 修复：添加 LocalTransform
+        mgr.AddComponent<LocalToWorld>(_SkirtPrototype);
+        mgr.AddComponent<TerrainSkirt>(_SkirtPrototype);
+        mgr.AddComponent<TerrainDeferredVisible>(_SkirtPrototype);
+        mgr.AddComponent<TerrainSkirtLinkedParent>(_SkirtPrototype);
+        mgr.AddComponent<Prefab>(_SkirtPrototype);
+        mgr.SetComponentEnabled<TerrainDeferredVisible>(_SkirtPrototype, false);
     }
 
     [BurstCompile]
     public void OnDestroy(ref SystemState state)
     {
-        if (m_ChunkMap.IsCreated) m_ChunkMap.Dispose();
+        if (_ChunkMap.IsCreated) _ChunkMap.Dispose();
     }
 
     [BurstCompile]
@@ -79,13 +79,13 @@ public partial struct ChunkManagerSystem : ISystem
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         var playerChunkPos = VoxelUtils.WorldToChunk(playerPos, config.ChunkSize);
 
-        if (math.all(playerChunkPos == m_LastPlayerChunkPos))
+        if (math.all(playerChunkPos == _LastPlayerChunkPos))
         {
             UpdateChunkNeighbours(ref state);
             return;
         }
 
-        m_LastPlayerChunkPos = playerChunkPos;
+        _LastPlayerChunkPos = playerChunkPos;
         var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged);
 
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.Temp);
@@ -99,7 +99,7 @@ public partial struct ChunkManagerSystem : ISystem
                 }
 
         var chunksToDestroy = new NativeList<int3>(Allocator.Temp);
-        foreach (var pair in m_ChunkMap)
+        foreach (var pair in _ChunkMap)
         {
             if (!requiredChunks.Contains(pair.Key))
             {
@@ -111,18 +111,18 @@ public partial struct ChunkManagerSystem : ISystem
 
         foreach (var key in chunksToDestroy)
         {
-            m_ChunkMap.Remove(key);
+            _ChunkMap.Remove(key);
         }
 
         foreach (var pos in requiredChunks)
         {
-            if (m_ChunkMap.ContainsKey(pos)) continue;
+            if (_ChunkMap.ContainsKey(pos)) continue;
 
-            Entity newChunk = ecb.Instantiate(m_ChunkPrototype);
+            Entity newChunk = ecb.Instantiate(_ChunkPrototype);
             var skirts = new FixedList64Bytes<Entity>();
             for (byte i = 0; i < 6; i++)
             {
-                var skirt = ecb.Instantiate(m_SkirtPrototype);
+                var skirt = ecb.Instantiate(_SkirtPrototype);
                 ecb.SetComponent(skirt, new TerrainSkirt { Direction = i });
                 ecb.SetComponent(skirt, new TerrainSkirtLinkedParent { ChunkParent = newChunk });
                 ecb.SetComponent(skirt, LocalTransform.FromPosition(pos * config.ChunkSize));
@@ -130,7 +130,7 @@ public partial struct ChunkManagerSystem : ISystem
             }
             ecb.SetComponent(newChunk, new Chunk { Position = pos, Skirts = skirts });
             ecb.SetComponent(newChunk, LocalTransform.FromPosition(pos * config.ChunkSize));
-            m_ChunkMap.TryAdd(pos, newChunk);
+            _ChunkMap.TryAdd(pos, newChunk);
         }
 
         UpdateChunkNeighbours(ref state);
@@ -144,7 +144,7 @@ public partial struct ChunkManagerSystem : ISystem
     {
         var job = new UpdateNeighbourMasksJob
         {
-            ChunkMap = m_ChunkMap.AsReadOnly()
+            ChunkMap = _ChunkMap.AsReadOnly()
         };
         state.Dependency = job.ScheduleParallel(state.Dependency);
     }

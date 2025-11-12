@@ -9,18 +9,18 @@ namespace OptIn.Voxel.Meshing
     {
         public VoxelMeshBuilder.NativeMeshData MeshData;
         public JobHandle JobHandle;
-        private int3 m_PaddedChunkSize;
+        private int3 _PaddedChunkSize;
 
         public void Init(TerrainConfig config)
         {
-            m_PaddedChunkSize = config.PaddedChunkSize;
-            MeshData = new VoxelMeshBuilder.NativeMeshData(m_PaddedChunkSize);
+            _PaddedChunkSize = config.PaddedChunkSize;
+            MeshData = new VoxelMeshBuilder.NativeMeshData(_PaddedChunkSize);
         }
         
         // [修复] 接收NormalsHandler并将其法线数据传递下去
         public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
-            JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(chunkVoxels.Voxels, m_PaddedChunkSize, MeshData, normals.VoxelNormals, dependency);
+            JobHandle = VoxelMeshBuilder.ScheduleMeshingJob(chunkVoxels.Voxels, _PaddedChunkSize, MeshData, normals.VoxelNormals, dependency);
         }
 
         public void Dispose()
