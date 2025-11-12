@@ -170,9 +170,9 @@ MonoBehaviour:
   ChunkSpawnSize:
     x: 8
     y: 8
-  ChunkMaterial: {fileID: 2100000, guid: 0fbb6114864c2014b87fc493434a98af, type: 2}
+  ChunkMaterial: {fileID: 2100000, guid: ab77a143e630ac94daa1218f76ccb619, type: 2}
   VoxelComputeShader: {fileID: 7200000, guid: e7dc96f6d2e619c4c98e33a6544e95d6, type: 3}
-  VoxelControllerPrefab: {fileID: 1767121422}
+  MeshJobsPerTick: 4
 --- !u!1 &1273372012
 GameObject:
   m_ObjectHideFlags: 0
@@ -409,19 +409,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 59acdf50fe2eb23439e45523c4bd3781, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
-  m_WalkSpeed: 6
-  m_RunSpeed: 11
-  m_LimitDiagonalSpeed: 1
-  m_ToggleRun: 0
-  m_JumpSpeed: 8
-  m_Gravity: 20
-  m_FallingThreshold: 10
-  m_SlideWhenOverSlopeLimit: 0
-  m_SlideOnTaggedObjects: 0
-  m_SlideSpeed: 12
-  m_AirControl: 0
-  m_AntiBumpFactor: 0.75
-  m_AntiBunnyHopFactor: 1
+  _WalkSpeed: 6
+  _RunSpeed: 11
+  _LimitDiagonalSpeed: 1
+  _ToggleRun: 0
+  _JumpSpeed: 8
+  _Gravity: 20
+  _FallingThreshold: 10
+  _SlideWhenOverSlopeLimit: 0
+  _SlideOnTaggedObjects: 0
+  _SlideSpeed: 12
+  _AirControl: 0
+  _AntiBumpFactor: 0.75
+  _AntiBunnyHopFactor: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
