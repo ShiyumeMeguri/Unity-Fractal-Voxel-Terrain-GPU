@@ -8,7 +8,6 @@ public class TerrainAuthoring : MonoBehaviour
     public int2 ChunkSpawnSize = new int2(8, 8);
     public Material ChunkMaterial;
     public ComputeShader VoxelComputeShader;
-    public GameObject VoxelControllerPrefab;
 
     class Baker : Baker<TerrainAuthoring>
     {
@@ -16,15 +15,13 @@ public class TerrainAuthoring : MonoBehaviour
         {
             var entity = GetEntity(TransformUsageFlags.None);
 
-            // 烘焙地形配置为单例组件
             AddComponent(entity, new TerrainConfig
             {
                 ChunkSize = authoring.ChunkSize,
                 ChunkSpawnSize = authoring.ChunkSpawnSize,
-                VoxelControllerPrefab = GetEntity(authoring.VoxelControllerPrefab, TransformUsageFlags.None)
             });
 
-            // 将材质和Compute Shader作为托管组件添加
+            // 修正：将托管对象存入一个单独的组件中
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
@@ -34,7 +31,7 @@ public class TerrainAuthoring : MonoBehaviour
     }
 }
 
-// 使用托管组件来存储对Unity对象的引用
+// 修正：这是一个托管组件，应该继承 IComponentData
 public class TerrainResources : IComponentData
 {
     public Material ChunkMaterial;

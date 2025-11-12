@@ -11,160 +11,149 @@ using UnityEngine.Rendering;
 [UpdateAfter(typeof(ChunkManagerSystem))]
 public partial class VoxelGenerationSystem : SystemBase
 {
-    private EntityQuery newChunksQuery;
-    private Queue<ComputeBuffer> bufferPool = new Queue<ComputeBuffer>();
+    private EntityQuery m_NewChunksQuery;
+    private Queue<ComputeBuffer> m_BufferPool = new Queue<ComputeBuffer>();
+    private List<GpuVoxelDataRequest> m_ActiveRequests = new List<GpuVoxelDataRequest>();
+    private const int MaxConcurrentRequests = 8;
 
     protected override void OnCreate()
     {
-        newChunksQuery = GetEntityQuery(
+        m_NewChunksQuery = GetEntityQuery(
             ComponentType.ReadOnly<Chunk>(),
             ComponentType.ReadOnly<RequestGpuDataTag>()
         );
+        RequireForUpdate(m_NewChunksQuery);
         RequireForUpdate<TerrainConfig>();
         RequireForUpdate<TerrainResources>();
     }
 
     protected override void OnDestroy()
     {
-        // 必须完成任何可能正在访问池化缓冲区的正在进行的作业
         CompleteDependency();
+        AsyncGPUReadback.WaitAllRequests();
 
-        // 清理在关闭前可能未完成的任何请求
-        foreach (var (request, entity) in SystemAPI.Query<GpuVoxelDataRequest>().WithEntityAccess())
+        foreach (var request in m_ActiveRequests)
         {
-            // 如果请求尚未完成，我们需要等待它，以安全地释放资源
-            if (!request.Request.done)
-            {
-                request.Request.WaitForCompletion();
-            }
-            if (request.TempVoxelData.IsCreated)
-            {
-                request.TempVoxelData.Dispose();
-            }
-
-            // 来自未完成请求的缓冲区不会返回到池中，因此直接释放它
-            request.Buffer?.Release();
+            CleanupRequest(request);
         }
+        m_ActiveRequests.Clear();
 
-        // 释放池中所有剩余的缓冲区
-        while (bufferPool.Count > 0)
+        while (m_BufferPool.Count > 0)
         {
-            bufferPool.Dequeue().Release();
+            m_BufferPool.Dequeue()?.Release();
         }
     }
 
     protected override void OnUpdate()
     {
-        if (!SystemAPI.TryGetSingleton<TerrainConfig>(out var config) || !SystemAPI.ManagedAPI.TryGetSingleton<TerrainResources>(out var resources))
-        {
+        if (!SystemAPI.TryGetSingleton(out TerrainConfig config) || !SystemAPI.ManagedAPI.TryGetSingleton(out TerrainResources resources))
             return;
-        }
 
-        var ecb = new EntityCommandBuffer(Allocator.TempJob);
+        var ecb = SystemAPI.GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(World.Unmanaged);
 
-        // 1. 处理已完成的GPU回读请求
-        foreach (var (request, entity) in SystemAPI.Query<GpuVoxelDataRequest>().WithEntityAccess().WithAll<PendingGpuDataTag>())
+        ProcessCompletedRequests(ecb);
+        DispatchNewRequests(config, resources, ecb);
+    }
+
+    private void ProcessCompletedRequests(EntityCommandBuffer ecb)
+    {
+        for (int i = m_ActiveRequests.Count - 1; i >= 0; i--)
         {
-            if (!SystemAPI.Exists(entity) || !request.Request.done) continue;
+            var request = m_ActiveRequests[i];
+            if (!request.Request.done) continue;
 
-            var chunkData = SystemAPI.GetComponent<ChunkVoxelData>(entity);
+            // [修复] 直接使用 TargetEntity，不再需要循环
+            Entity entity = request.TargetEntity;
 
-            if (request.Request.hasError)
+            if (EntityManager.Exists(entity))
             {
-                Debug.LogError($"GPU readback error for chunk entity {entity.Index}.");
-                if (request.TempVoxelData.IsCreated) request.TempVoxelData.Dispose();
-            }
-            else
-            {
-                // 如果 NativeArray 尚未创建，则创建它
-                if (!chunkData.IsCreated)
+                if (request.Request.hasError)
                 {
-                    chunkData.Voxels = new NativeArray<Voxel>(request.TempVoxelData.Length, Allocator.Persistent);
+                    Debug.LogError($"GPU readback error for entity {entity.Index}.");
                 }
-
-                // 确保缓冲区长度匹配以避免错误
-                if (chunkData.Voxels.Length == request.TempVoxelData.Length)
+                else if (request.TempVoxelData.IsCreated)
                 {
-                    chunkData.Voxels.CopyFrom(request.TempVoxelData);
-                    ecb.SetComponent(entity, chunkData);
+                    var chunkDataRW = SystemAPI.GetComponentRW<ChunkVoxelData>(entity);
+
+                    if (!chunkDataRW.ValueRO.IsCreated || chunkDataRW.ValueRO.Voxels.Length != request.TempVoxelData.Length)
+                    {
+                        if (chunkDataRW.ValueRO.IsCreated) chunkDataRW.ValueRO.Voxels.Dispose();
+                        chunkDataRW.ValueRW.Voxels = new NativeArray<Voxel>(request.TempVoxelData.Length, Allocator.Persistent);
+                    }
+                    // [修复] 从 request.TempVoxelData 复制，而不是从一个不存在的 slice
+                    chunkDataRW.ValueRW.Voxels.CopyFrom(request.TempVoxelData);
+
                     ecb.SetComponentEnabled<RequestPaddingUpdateTag>(entity, true);
                 }
-                else
-                {
-                    Debug.LogError($"Buffer length mismatch for chunk entity {entity.Index}. Expected {chunkData.Voxels.Length}, got {request.TempVoxelData.Length}.");
-                }
-
-                // 临时数据已被复制，现在可以安全地释放
-                if (request.TempVoxelData.IsCreated) request.TempVoxelData.Dispose();
+                ecb.SetComponentEnabled<PendingGpuDataTag>(entity, false);
             }
 
-            ecb.SetComponentEnabled<PendingGpuDataTag>(entity, false);
-            ecb.RemoveComponent<GpuVoxelDataRequest>(entity);
-
-            // 将使用的ComputeBuffer返回到池中以便重用
-            if (request.Buffer != null)
-            {
-                bufferPool.Enqueue(request.Buffer);
-            }
+            CleanupRequest(request);
+            m_ActiveRequests.RemoveAt(i);
         }
+    }
 
-        ecb.Playback(EntityManager);
-        ecb.Dispose();
+    private void DispatchNewRequests(TerrainConfig config, TerrainResources resources, EntityCommandBuffer ecb)
+    {
+        if (m_ActiveRequests.Count >= MaxConcurrentRequests) return;
 
-        var ecbForDispatch = new EntityCommandBuffer(Allocator.TempJob);
+        using var newChunkEntities = m_NewChunksQuery.ToEntityArray(Allocator.Temp);
+        if (newChunkEntities.Length == 0) return;
 
-        // 2. 发起新的GPU生成请求
-        var newChunkEntities = newChunksQuery.ToEntityArray(Allocator.Temp);
+        int availableSlots = MaxConcurrentRequests - m_ActiveRequests.Count;
+        int chunksToProcess = math.min(newChunkEntities.Length, availableSlots);
 
-        foreach (var entity in newChunkEntities)
+        var paddedChunkSize = config.ChunkSize + 2;
+        int voxelsPerChunk = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
+        var computeShader = resources.VoxelComputeShader;
+        int kernel = computeShader.FindKernel("CSMain");
+        var threadGroupSize = new int3(8, 8, 8);
+        var groups = (paddedChunkSize + threadGroupSize - 1) / threadGroupSize;
+
+        for (int i = 0; i < chunksToProcess; i++)
         {
-            if (!SystemAPI.IsComponentEnabled<RequestGpuDataTag>(entity)) continue;
-
+            Entity entity = newChunkEntities[i];
             var chunk = SystemAPI.GetComponent<Chunk>(entity);
-            var paddedChunkSize = config.ChunkSize + 2;
-            int numVoxels = (paddedChunkSize.x) * (paddedChunkSize.y) * (paddedChunkSize.z);
 
-            ComputeBuffer buffer;
-            if (bufferPool.Count > 0)
+            if (!m_BufferPool.TryDequeue(out var buffer) || !buffer.IsValid() || buffer.count != voxelsPerChunk)
             {
-                buffer = bufferPool.Dequeue();
-                // 确保缓冲区大小正确（在配置更改时可能不正确）
-                if (buffer.count != numVoxels)
-                {
-                    buffer.Release();
-                    buffer = new ComputeBuffer(numVoxels, UnsafeUtility.SizeOf<Voxel>(), ComputeBufferType.Structured);
-                }
-            }
-            else
-            {
-                buffer = new ComputeBuffer(numVoxels, UnsafeUtility.SizeOf<Voxel>(), ComputeBufferType.Structured);
+                buffer?.Release();
+                buffer = new ComputeBuffer(voxelsPerChunk, UnsafeUtility.SizeOf<Voxel>());
             }
 
-            int kernel = resources.VoxelComputeShader.FindKernel("CSMain");
-            resources.VoxelComputeShader.SetBuffer(kernel, "asyncVoxelBuffer", buffer);
-            resources.VoxelComputeShader.SetInts("chunkPosition", chunk.Position.x, chunk.Position.y, chunk.Position.z);
-            resources.VoxelComputeShader.SetInts("chunkSize", paddedChunkSize.x, paddedChunkSize.y, paddedChunkSize.z);
+            computeShader.SetBuffer(kernel, "asyncVoxelBuffer", buffer);
+            computeShader.SetInts("chunkPosition", chunk.Position.x, chunk.Position.y, chunk.Position.z);
+            computeShader.SetInts("chunkSize", paddedChunkSize.x, paddedChunkSize.y, paddedChunkSize.z);
+            computeShader.Dispatch(kernel, groups.x, groups.y, groups.z);
 
-            int3 threadGroupSize = new int3(8, 8, 8);
-            int3 groups = (paddedChunkSize + threadGroupSize - 1) / threadGroupSize;
-            resources.VoxelComputeShader.Dispatch(kernel, groups.x, groups.y, groups.z);
-
-            var tempVoxelData = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);
+            var tempVoxelData = new NativeArray<Voxel>(voxelsPerChunk, Allocator.Persistent);
+            // [修复] 修正 AsyncGPUReadback.RequestIntoNativeArray 的调用
             var request = AsyncGPUReadback.RequestIntoNativeArray(ref tempVoxelData, buffer);
 
-            ecbForDispatch.AddComponent(entity, new GpuVoxelDataRequest
+            m_ActiveRequests.Add(new GpuVoxelDataRequest
             {
                 Request = request,
                 TempVoxelData = tempVoxelData,
-                Buffer = buffer
+                Buffer = buffer,
+                // [修复] 将单个实体赋值给 TargetEntity
+                TargetEntity = entity
             });
 
-            ecbForDispatch.SetComponentEnabled<RequestGpuDataTag>(entity, false);
-            ecbForDispatch.SetComponentEnabled<PendingGpuDataTag>(entity, true);
+            ecb.SetComponentEnabled<RequestGpuDataTag>(entity, false);
+            ecb.SetComponentEnabled<PendingGpuDataTag>(entity, true);
         }
+    }
 
-        newChunkEntities.Dispose();
-        ecbForDispatch.Playback(EntityManager);
-        ecbForDispatch.Dispose();
+    private void CleanupRequest(GpuVoxelDataRequest request)
+    {
+        if (request.TempVoxelData.IsCreated) request.TempVoxelData.Dispose();
+
+        if (request.Buffer != null && request.Buffer.IsValid())
+        {
+            if (m_BufferPool.Count < MaxConcurrentRequests)
+                m_BufferPool.Enqueue(request.Buffer);
+            else
+                request.Buffer.Release();
+        }
     }
 }

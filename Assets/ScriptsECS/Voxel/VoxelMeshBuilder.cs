@@ -1,4 +1,4 @@
-using OptIn.Voxel;
+﻿using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -18,18 +18,16 @@ public static class VoxelMeshBuilder
 
     public class NativeMeshData : System.IDisposable
     {
-        public NativeArray<Voxel> nativeVoxels;
         public NativeArray<GPUVertex> nativeVertices;
         public NativeArray<int> nativeIndices;
         public NativeCounter counter;
 
-        public NativeMeshData(int3 chunkSize)
+        public NativeMeshData(int3 paddedChunkSize)
         {
-            int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
-            int maxVertices = 12 * numVoxels;
-            int maxIndices = 18 * numVoxels;
+            int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
+            int maxVertices = numVoxels * 5;
+            int maxIndices = maxVertices / 4 * 6;
 
-            nativeVoxels = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);
             nativeVertices = new NativeArray<GPUVertex>(maxVertices, Allocator.Persistent);
             nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent);
             counter = new NativeCounter(Allocator.Persistent);
@@ -43,7 +41,6 @@ public static class VoxelMeshBuilder
 
         public void Dispose()
         {
-            if (nativeVoxels.IsCreated) nativeVoxels.Dispose();
             if (nativeVertices.IsCreated) nativeVertices.Dispose();
             if (nativeIndices.IsCreated) nativeIndices.Dispose();
             if (counter.IsCreated) counter.Dispose();
@@ -65,6 +62,7 @@ public static class VoxelMeshBuilder
         return job.Schedule(dependency);
     }
 
+    // ... [VoxelMeshBuildJob and AddQuadByDirection remain unchanged] ...
     [BurstCompile]
     struct VoxelMeshBuildJob : IJob
     {
@@ -93,45 +91,45 @@ public static class VoxelMeshBuilder
                 {
                     float t = math.unlerp(v1.Density, v2.Density, 0f);
                     if (!float.IsFinite(t)) t = 0.5f;
-                    pointSum += math.lerp(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]], pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]], t);
+                    pointSum += math.lerp((float3)(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]), (float3)(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]), t);
                     crossings++;
                 }
             }
             return crossings > 0 ? pointSum / crossings : (float3)pos + 0.5f;
         }
 
-        private float GetDensityForGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
+        private float GetDensityForGradient(int3 pos)
         {
-            return voxelData[VoxelUtil.To1DIndex(pos, chunkSize)].Density;
+            return voxels[VoxelUtil.To1DIndex(pos, chunkSize)].Density;
         }
 
-        private float3 CalculatePaddedGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
+        private float3 CalculatePaddedGradient(int3 pos)
         {
             float dx, dy, dz;
 
             // X-axis
             if (pos.x == 0)
-                dx = GetDensityForGradient(pos + new int3(1, 0, 0), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                dx = GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos);
             else if (pos.x == chunkSize.x - 1)
-                dx = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(1, 0, 0), chunkSize, voxelData);
+                dx = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(1, 0, 0));
             else
-                dx = (GetDensityForGradient(pos + new int3(1, 0, 0), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(1, 0, 0), chunkSize, voxelData)) * 0.5f;
+                dx = (GetDensityForGradient(pos + new int3(1, 0, 0)) - GetDensityForGradient(pos - new int3(1, 0, 0))) * 0.5f;
 
             // Y-axis
             if (pos.y == 0)
-                dy = GetDensityForGradient(pos + new int3(0, 1, 0), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                dy = GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos);
             else if (pos.y == chunkSize.y - 1)
-                dy = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 1, 0), chunkSize, voxelData);
+                dy = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(0, 1, 0));
             else
-                dy = (GetDensityForGradient(pos + new int3(0, 1, 0), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 1, 0), chunkSize, voxelData)) * 0.5f;
+                dy = (GetDensityForGradient(pos + new int3(0, 1, 0)) - GetDensityForGradient(pos - new int3(0, 1, 0))) * 0.5f;
 
             // Z-axis
             if (pos.z == 0)
-                dz = GetDensityForGradient(pos + new int3(0, 0, 1), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                dz = GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos);
             else if (pos.z == chunkSize.z - 1)
-                dz = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 0, 1), chunkSize, voxelData);
+                dz = GetDensityForGradient(pos) - GetDensityForGradient(pos - new int3(0, 0, 1));
             else
-                dz = (GetDensityForGradient(pos + new int3(0, 0, 1), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 0, 1), chunkSize, voxelData)) * 0.5f;
+                dz = (GetDensityForGradient(pos + new int3(0, 0, 1)) - GetDensityForGradient(pos - new int3(0, 0, 1))) * 0.5f;
 
             float3 grad = new float3(dx, dy, dz);
             return math.normalizesafe(-grad, new float3(0, 1, 0));
@@ -140,23 +138,13 @@ public static class VoxelMeshBuilder
         public void Execute()
         {
             int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
-            var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+            var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp);
 
-            // Pass 1: Pre-calculate all gradients using a safe method for boundaries
-            for (int x = 0; x < chunkSize.x; x++)
+            for (int i = 0; i < numVoxels; i++)
             {
-                for (int y = 0; y < chunkSize.y; y++)
-                {
-                    for (int z = 0; z < chunkSize.z; z++)
-                    {
-                        var pos = new int3(x, y, z);
-                        int index = VoxelUtil.To1DIndex(pos, chunkSize);
-                        gradients[index] = CalculatePaddedGradient(pos, chunkSize, voxels);
-                    }
-                }
+                gradients[i] = CalculatePaddedGradient(VoxelUtil.To3DIndex(i, chunkSize));
             }
 
-            // Pass 2: Build mesh using pre-calculated gradients
             for (int x = 1; x < chunkSize.x - 1; x++)
                 for (int y = 1; y < chunkSize.y - 1; y++)
                     for (int z = 1; z < chunkSize.z - 1; z++)
@@ -164,15 +152,11 @@ public static class VoxelMeshBuilder
                         var pos = new int3(x, y, z);
                         var voxel = GetVoxelOrEmpty(pos);
 
-                        // --- Block Meshing Logic ---
                         if (voxel.IsBlock)
                         {
                             for (int direction = 0; direction < 6; direction++)
                             {
                                 Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                // FIX: Generate a face if the neighbor is NOT a block.
-                                // This treats smooth voxels (IsIsosurface) and Air as empty space,
-                                // which is the desired behavior for creating a hard seam.
                                 if (!neighborVoxel.IsBlock)
                                 {
                                     AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
@@ -180,14 +164,9 @@ public static class VoxelMeshBuilder
                             }
                         }
 
-                        // --- Smooth Meshing (Dual Contouring) Logic ---
                         for (int axis = 0; axis < 3; axis++)
                         {
                             var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
-
-                            // FIX: Generate a smooth face ONLY IF both the current voxel and its neighbor
-                            // are of the isosurface type (which includes Air).
-                            // This explicitly stops the smooth mesher from trying to blend with block voxels.
                             if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                             {
                                 int quadIndex = counter.Increment();

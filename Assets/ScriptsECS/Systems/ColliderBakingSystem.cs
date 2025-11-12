@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Physics;
 using UnityEngine;
@@ -8,61 +10,69 @@ using UnityEngine;
 [UpdateAfter(typeof(MeshingSystem))]
 public partial class ColliderBakingSystem : SystemBase
 {
-    private EntityQuery query;
+    private EndSimulationEntityCommandBufferSystem m_EndSimECBSystem;
 
     protected override void OnCreate()
     {
-        query = GetEntityQuery(
+        // [修复] 在 OnCreate 中获取 ECB 系统
+        m_EndSimECBSystem = World.GetOrCreateSystemManaged<EndSimulationEntityCommandBufferSystem>();
+        RequireForUpdate(GetEntityQuery(
             ComponentType.ReadOnly<GeneratedMesh>(),
             ComponentType.ReadOnly<RequestColliderBakeTag>()
-        );
-        RequireForUpdate(query);
+        ));
     }
 
     protected override void OnUpdate()
     {
-        // 使用 SystemAPI.Query 来替代过时的 Entities.ForEach
-        foreach (var entity in query.ToEntityArray(Allocator.Temp))
+        var ecb = m_EndSimECBSystem.CreateCommandBuffer();
+
+        // [修复] 使用 foreach 替代错误的 .WithoutBurst().Run()
+        foreach (var (generatedMesh, entity) in SystemAPI.Query<GeneratedMesh>().WithAll<RequestColliderBakeTag>().WithEntityAccess())
         {
-            var generatedMesh = EntityManager.GetComponentData<GeneratedMesh>(entity);
             var mesh = generatedMesh.Mesh;
 
             if (mesh == null || mesh.vertexCount == 0)
             {
-                EntityManager.SetComponentEnabled<RequestColliderBakeTag>(entity, false);
-                EntityManager.RemoveComponent<GeneratedMesh>(entity);
+                ecb.SetComponentEnabled(entity, ComponentType.ReadWrite<RequestColliderBakeTag>(), false);
+                ecb.RemoveComponent<GeneratedMesh>(entity);
                 continue;
             }
 
-            // Corrected: Removed 'using' to make the NativeArray modifiable.
-            var vertices = new NativeArray<float3>(mesh.vertexCount, Allocator.TempJob);
+            var verticesList = new List<Vector3>();
+            mesh.GetVertices(verticesList);
+            var vertices = new NativeArray<float3>(verticesList.Count, Allocator.TempJob);
+            for (int i = 0; i < verticesList.Count; i++) vertices[i] = verticesList[i];
+
             var triangles = new NativeArray<int>(mesh.triangles, Allocator.TempJob);
 
-            try
+            var colliderBlob = Unity.Physics.MeshCollider.Create(
+                vertices,
+                triangles.Reinterpret<int3>(sizeof(int))
+            );
+
+            if (SystemAPI.HasComponent<PhysicsCollider>(entity))
             {
-                // Manual conversion from Vector3[] to NativeArray<float3>
-                var sourceVerts = mesh.vertices;
-                for (int i = 0; i < sourceVerts.Length; i++)
+                if (SystemAPI.GetComponent<PhysicsCollider>(entity).Value.IsCreated)
                 {
-                    vertices[i] = sourceVerts[i]; // This line now works.
+                    SystemAPI.GetComponentRW<PhysicsCollider>(entity).ValueRW.Value.Dispose();
                 }
-
-                var colliderBlob = Unity.Physics.MeshCollider.Create(
-                    vertices,
-                    triangles.Reinterpret<int3>(sizeof(int))
-                );
-
-                EntityManager.AddComponentData(entity, new PhysicsCollider { Value = colliderBlob });
+                ecb.SetComponent(entity, new PhysicsCollider { Value = colliderBlob });
             }
-            finally
+            else
             {
-                // Ensure disposal even if an error occurs.
-                vertices.Dispose();
-                triangles.Dispose();
+                ecb.AddComponent(entity, new PhysicsCollider { Value = colliderBlob });
             }
 
-            EntityManager.SetComponentEnabled<RequestColliderBakeTag>(entity, false);
-            EntityManager.RemoveComponent<GeneratedMesh>(entity);
+            Dependency = JobHandle.CombineDependencies(
+                vertices.Dispose(Dependency),
+                triangles.Dispose(Dependency)
+            );
+
+            ecb.SetComponentEnabled<RequestColliderBakeTag>(entity, false);
+            ecb.RemoveComponent<GeneratedMesh>(entity);
         }
+
+        // [修复] 将依赖添加到ECB系统
+        m_EndSimECBSystem.AddJobHandleForProducer(Dependency);
     }
 }
