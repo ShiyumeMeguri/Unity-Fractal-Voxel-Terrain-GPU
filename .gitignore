@@ -11,6 +11,8 @@
 /[Uu]ser[Ss]ettings/
 /Assets/Scripts/*.zip
 /Assets/Scripts/*.zip.meta
+/Assets/ScriptsECS/*.zip
+/Assets/ScriptsECS/*.zip.meta
 
 # MemoryCaptures can get excessive in size.
 # They also could contain extremely sensitive data
