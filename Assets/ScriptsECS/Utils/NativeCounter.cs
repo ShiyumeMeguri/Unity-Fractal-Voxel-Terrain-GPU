@@ -1,3 +1,4 @@
+// Assets/ScriptsECS/Utils/NativeCounter.cs
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -14,9 +15,9 @@ namespace OptIn.Voxel
         private int* _Counter;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-        private AtomicSafetyHandle _Safety;
+        private AtomicSafetyHandle m_Safety;
         [NativeSetClassTypeToNullOnSchedule]
-        private DisposeSentinel _DisposeSentinel;
+        private DisposeSentinel m_DisposeSentinel;
 #endif
 
         private Allocator _AllocatorLabel;
@@ -25,13 +26,13 @@ namespace OptIn.Voxel
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
             if (!UnsafeUtility.IsBlittable<int>())
-                throw new ArgumentException(string.Format("{0} used in NativeQueue<{0}> must be blittable", typeof(int)));
+                throw new ArgumentException($"{typeof(int)} used in NativeCounter must be blittable");
 #endif
             _AllocatorLabel = label;
             _Counter = (int*)UnsafeUtility.Malloc(UnsafeUtility.SizeOf<int>(), 4, label);
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Create(out _Safety, out _DisposeSentinel, 0, label);
+            DisposeSentinel.Create(out m_Safety, out m_DisposeSentinel, 0, label);
 #endif
             Count = 0;
         }
@@ -41,14 +42,14 @@ namespace OptIn.Voxel
             get
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckReadAndThrow(_Safety);
+                AtomicSafetyHandle.CheckReadAndThrow(m_Safety);
 #endif
                 return *_Counter;
             }
             set
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
                 *_Counter = value;
             }
@@ -59,19 +60,22 @@ namespace OptIn.Voxel
         public void Dispose()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Dispose(ref _Safety, ref _DisposeSentinel);
+            DisposeSentinel.Dispose(ref m_Safety, ref m_DisposeSentinel);
 #endif
-            UnsafeUtility.Free(_Counter, _AllocatorLabel);
-            _Counter = null;
+            if (_Counter != null)
+            {
+                UnsafeUtility.Free(_Counter, _AllocatorLabel);
+                _Counter = null;
+            }
         }
 
         public Concurrent ToConcurrent()
         {
             Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
-            concurrent._Safety = _Safety;
-            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent._Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+            concurrent.m_Safety = m_Safety;
+            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent.m_Safety);
 #endif
             concurrent._Counter = _Counter;
             return concurrent;
@@ -85,13 +89,13 @@ namespace OptIn.Voxel
             internal int* _Counter;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            internal AtomicSafetyHandle _Safety;
+            internal AtomicSafetyHandle m_Safety;
 #endif
 
             public int Increment()
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
                 return Interlocked.Increment(ref *_Counter) - 1;
             }
@@ -99,7 +103,7 @@ namespace OptIn.Voxel
             public int Add(int value)
             {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
                 return Interlocked.Add(ref *_Counter, value) - value;
             }

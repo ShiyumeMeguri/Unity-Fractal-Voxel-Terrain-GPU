@@ -4,9 +4,8 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
-using OptIn.Voxel;
 
-namespace OptIn.Voxel.Meshing
+namespace OptIn.Voxel
 {
     [StructLayout(LayoutKind.Sequential)]
     [NativeContainer]
@@ -18,9 +17,9 @@ namespace OptIn.Voxel.Meshing
         private Allocator _AllocatorLabel;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-        private AtomicSafetyHandle _Safety;
+        private AtomicSafetyHandle m_Safety;
         [NativeSetClassTypeToNullOnSchedule]
-        private DisposeSentinel _DisposeSentinel;
+        private DisposeSentinel m_DisposeSentinel;
 #endif
 
         public NativeMultiCounter(int capacity, Allocator label)
@@ -29,18 +28,20 @@ namespace OptIn.Voxel.Meshing
             _Capacity = capacity;
             int sizeOfInt = UnsafeUtility.SizeOf<int>();
             _Counters = (int*)UnsafeUtility.Malloc(sizeOfInt * capacity, 4, label);
-            UnsafeUtility.MemClear(_Counters, sizeOfInt * capacity);
+            UnsafeUtility.MemClear(_Counters, (long)sizeOfInt * capacity);
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Create(out _Safety, out _DisposeSentinel, 0, label);
+            DisposeSentinel.Create(out m_Safety, out m_DisposeSentinel, 0, label);
 #endif
         }
 
-        // [修复] 添加 IsCreated 属性
         public bool IsCreated => _Counters != null;
 
         public int Sum()
         {
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            AtomicSafetyHandle.CheckReadAndThrow(m_Safety);
+#endif
             int sum = 0;
             for (int i = 0; i < _Capacity; i++)
             {
@@ -51,6 +52,9 @@ namespace OptIn.Voxel.Meshing
 
         public int[] ToArray()
         {
+#if ENABLE_UNITY_COLLECTIONS_CHECKS
+            AtomicSafetyHandle.CheckReadAndThrow(m_Safety);
+#endif
             int[] arr = new int[_Capacity];
             for (int i = 0; i < _Capacity; i++)
             {
@@ -59,19 +63,18 @@ namespace OptIn.Voxel.Meshing
             return arr;
         }
 
-
         public void Reset()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
-            UnsafeUtility.MemClear(_Counters, UnsafeUtility.SizeOf<int>() * _Capacity);
+            UnsafeUtility.MemClear(_Counters, (long)UnsafeUtility.SizeOf<int>() * _Capacity);
         }
 
         public void Dispose()
         {
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            DisposeSentinel.Dispose(ref _Safety, ref _DisposeSentinel);
+            DisposeSentinel.Dispose(ref m_Safety, ref m_DisposeSentinel);
 #endif
             if (IsCreated)
             {
@@ -84,9 +87,9 @@ namespace OptIn.Voxel.Meshing
         {
             Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
-            concurrent._Safety = _Safety;
-            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent._Safety);
+            AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+            concurrent.m_Safety = m_Safety;
+            AtomicSafetyHandle.UseSecondaryVersion(ref concurrent.m_Safety);
 #endif
             concurrent._Counters = _Counters;
             concurrent._Capacity = _Capacity;
@@ -102,7 +105,7 @@ namespace OptIn.Voxel.Meshing
             internal int _Capacity;
 
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-            internal AtomicSafetyHandle _Safety;
+            internal AtomicSafetyHandle m_Safety;
 #endif
 
             public int Increment(int index)
@@ -110,7 +113,7 @@ namespace OptIn.Voxel.Meshing
                 if (index >= _Capacity || index < 0)
                     throw new ArgumentOutOfRangeException(nameof(index));
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
+                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
                 return Interlocked.Increment(ref *(_Counters + index)) - 1;
             }
@@ -122,10 +125,10 @@ namespace OptIn.Voxel.Meshing
 
                 NativeCounter.Concurrent concurrent;
 #if ENABLE_UNITY_COLLECTIONS_CHECKS
-                AtomicSafetyHandle.CheckWriteAndThrow(_Safety);
-                concurrent._Safety = _Safety;
+                AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
+                concurrent.m_Safety = m_Safety;
+                AtomicSafetyHandle.UseSecondaryVersion(ref concurrent.m_Safety);
 #endif
-
                 concurrent._Counter = _Counters + index;
                 return concurrent;
             }

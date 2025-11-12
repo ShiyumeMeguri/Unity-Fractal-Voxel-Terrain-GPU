@@ -1,7 +1,10 @@
 // Assets/ScriptsECS/Meshing/Handlers/CoreMeshHandler.cs
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace OptIn.Voxel.Meshing
 {
@@ -38,6 +41,9 @@ namespace OptIn.Voxel.Meshing
 
         public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
+            // [修复] 确保新的 Job 链等待上一个使用此 Handler 的 Job 链完成
+            var combinedDep = JobHandle.CombineDependencies(this.JobHandle, dependency);
+
             VertexCounter.Count = 0;
             TriangleCounter.Count = 0;
 
@@ -46,7 +52,7 @@ namespace OptIn.Voxel.Meshing
                 Densities = chunkVoxels.Voxels,
                 Bits = _bits
             };
-            var checkHandle = checkJob.Schedule(_bits.Length, 64, dependency);
+            var checkHandle = checkJob.Schedule(_bits.Length, 64, combinedDep);
 
             var cornerJob = new CornerJob
             {
