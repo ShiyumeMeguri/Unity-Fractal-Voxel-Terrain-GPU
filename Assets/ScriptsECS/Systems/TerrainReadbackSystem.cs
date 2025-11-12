@@ -20,6 +20,7 @@ public partial class TerrainReadbackSystem : SystemBase
     private ComputeBuffer m_VoxelBuffer;
     private NativeArray<Voxel> m_ReadbackData;
     private bool m_ReadbackInProgress;
+    private bool m_IsInitialized; // 新增初始化标志
 
     private const int BATCH_SIZE = 8;
 
@@ -31,8 +32,11 @@ public partial class TerrainReadbackSystem : SystemBase
 
         m_Entities = new List<Entity>(BATCH_SIZE);
         m_IsFree = true;
+        m_IsInitialized = false; // 初始化为 false
+    }
 
-        var config = SystemAPI.GetSingleton<TerrainConfig>();
+    private void Initialize(TerrainConfig config)
+    {
         int numVoxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
         int totalVoxels = numVoxelsPerChunk * BATCH_SIZE;
 
@@ -43,7 +47,7 @@ public partial class TerrainReadbackSystem : SystemBase
         }
         else
         {
-            Enabled = false;
+            Enabled = false; // 如果配置无效，则禁用系统
         }
     }
 
@@ -65,6 +69,14 @@ public partial class TerrainReadbackSystem : SystemBase
 
     protected override void OnUpdate()
     {
+        // 首次更新时执行初始化
+        if (!m_IsInitialized)
+        {
+            var config = SystemAPI.GetSingleton<TerrainConfig>();
+            Initialize(config);
+            m_IsInitialized = true;
+        }
+
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.ReadbackSystemReady = m_IsFree;
 
