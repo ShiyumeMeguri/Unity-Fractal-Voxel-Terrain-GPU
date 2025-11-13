@@ -21,7 +21,6 @@ namespace OptIn.Voxel.Meshing
         {
             Indices[index] = int.MaxValue;
 
-            // [修复] 使用 int3 进行位置计算和比较
             int3 position = VoxelUtils.To3DIndex(index, ChunkSize);
             if (math.any(position >= ChunkSize - 2)) return;
 
@@ -29,7 +28,6 @@ namespace OptIn.Voxel.Meshing
             if (enabledCorners == 0 || enabledCorners == 255) return;
 
             ushort code = EdgeMaskUtils.EDGE_MASKS[enabledCorners];
-            // [修复] 显式转换为 int 以消除歧义
             int count = math.countbits((int)code);
             if (count == 0) return;
 

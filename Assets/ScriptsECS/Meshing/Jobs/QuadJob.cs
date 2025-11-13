@@ -1,9 +1,8 @@
-// Meshing/Jobs/QuadJob.cs
+using Mono.Cecil.Cil;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-
 namespace OptIn.Voxel.Meshing
 {
     [BurstCompile]
@@ -15,7 +14,6 @@ namespace OptIn.Voxel.Meshing
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> Triangles;
         public NativeCounter.Concurrent TriangleCounter;
         [ReadOnly] public int3 ChunkSize;
-
         private static readonly int[] shifts = { 0, 3, 8 };
         private const int EMPTY_MASK = 1 << 0 | 1 << 3 | 1 << 8;
 
@@ -32,33 +30,31 @@ namespace OptIn.Voxel.Meshing
 
             for (int i = 0; i < 3; i++)
             {
-                if (math.any(pos < (1 - VoxelUtils.DC_AXES[i]))) continue;
+                if (math.any(pos < (1 - (int3)DirectionOffsetUtils.FORWARD_DIRECTION[i]))) continue;
                 if (((enabledEdges >> shifts[i]) & 1) == 1)
                 {
-                    CheckEdge(index, i, pos);
+                    CheckEdge(index, i);
                 }
             }
         }
 
-        private void CheckEdge(int index, int direction, int3 pos)
+        private void CheckEdge(int index, int direction)
         {
-            int endIndex = index + VoxelUtils.To1DIndex((uint3)VoxelUtils.DC_AXES[direction], ChunkSize);
+            int endIndex = index + VoxelUtils.To1DIndex((uint3)DirectionOffsetUtils.FORWARD_DIRECTION[direction], ChunkSize);
 
-            // [修复] 正确获取四边形的四个顶点索引
-            int3 offset = pos + VoxelUtils.DC_AXES[direction] - 1;
-            int4 indices;
-            indices.x = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 0]), ChunkSize)];
-            indices.y = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 1]), ChunkSize)];
-            indices.z = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 2]), ChunkSize)];
-            indices.w = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 3]), ChunkSize)];
+            int4 positionalIndex = index + DirectionIndexOffsetUtils.NEGATIVE_ONE_OFFSET + DirectionIndexOffsetUtils.PERPENDICULAR_OFFSETS_INDEX_OFFSET[direction];
 
-            // [修复] 采用更明确的检查方式
-            if (indices.x == int.MaxValue || indices.y == int.MaxValue || indices.z == int.MaxValue || indices.w == int.MaxValue) return;
+            int4 indices = int.MaxValue;
+            for (int i = 0; i < 4; i++)
+            {
+                indices[i] = VertexIndices[positionalIndex[i]];
+            }
+
+            if (math.cmax(indices) == int.MaxValue) return;
 
             int triIndex = TriangleCounter.Add(2) * 3;
-            bool flip = Voxels[endIndex].Density < 0.0f;
+            bool flip = Voxels[endIndex].Density >= 0.0f;
 
-            // [修复] 调整顶点顺序以匹配参考代码的三角形生成方式
             Triangles[triIndex + (flip ? 0 : 2)] = indices.x;
             Triangles[triIndex + 1] = indices.y;
             Triangles[triIndex + (flip ? 2 : 0)] = indices.z;

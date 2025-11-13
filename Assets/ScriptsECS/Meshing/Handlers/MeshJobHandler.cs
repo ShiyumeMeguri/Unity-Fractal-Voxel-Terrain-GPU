@@ -105,6 +105,7 @@ namespace OptIn.Voxel.Meshing
 
             if (isEmpty)
             {
+                // [修复] 移除对 .IsCreated 的不正确检查
                 _Apply.MeshDataArray.Dispose();
             }
             else

@@ -40,6 +40,15 @@ public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
             Voxels.Dispose(disposeHandle);
         }
     }
+    public void Dispose()
+    {
+        if (IsCreated)
+        {
+            var disposeHandle = JobHandle.CombineDependencies(AsyncWriteJobHandle, AsyncReadJobHandle);
+            disposeHandle.Complete();
+            Voxels.Dispose();
+        }
+    }
 }
 
 

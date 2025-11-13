@@ -41,8 +41,10 @@ namespace OptIn.Voxel.Meshing
 
         public void Schedule(ref TerrainChunkVoxels chunkVoxels, ref NormalsHandler normals, JobHandle dependency)
         {
-            // [修复] 确保新的 Job 链等待上一个使用此 Handler 的 Job 链完成
-            var combinedDep = JobHandle.CombineDependencies(this.JobHandle, dependency);
+            // [修复] 确保新的 Job 链等待上一个使用此 Handler 的 Job 链完成，并通过链式调用合并多个依赖
+            var handle1 = JobHandle.CombineDependencies(this.JobHandle, dependency);
+            var handle2 = JobHandle.CombineDependencies(chunkVoxels.AsyncWriteJobHandle, chunkVoxels.AsyncReadJobHandle);
+            var combinedDep = JobHandle.CombineDependencies(handle1, handle2);
 
             VertexCounter.Count = 0;
             TriangleCounter.Count = 0;

@@ -6,7 +6,7 @@ namespace OptIn.Voxel
     public static class VoxelUtils
     {
         public const int PHYSICAL_CHUNK_SIZE = 32;
-        public const int SIZE = 34;
+        public const int SIZE = PHYSICAL_CHUNK_SIZE + 2; // Padded size
         public const int FACE = SIZE * SIZE;
         public const int VOLUME = SIZE * SIZE * SIZE;
         public const int SKIRT_SIZE = SIZE;

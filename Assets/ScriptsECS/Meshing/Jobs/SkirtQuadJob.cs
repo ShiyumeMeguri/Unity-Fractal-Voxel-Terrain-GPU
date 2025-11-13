@@ -1,4 +1,3 @@
-// Assets/ScriptsECS/Meshing/Jobs/SkirtQuadJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -26,21 +25,18 @@ namespace OptIn.Voxel.Meshing
             int2 flattened = VoxelUtils.FlattenToFaceRelative(position, direction);
             int other = position[direction];
 
-            int skirtSize = PaddedChunkSize.x;
-            int faceArea = skirtSize * skirtSize;
-
             if (other < 0 || other > PaddedChunkSize.x - 3)
             {
                 flattened += 1;
-                flattened = math.clamp(flattened, 0, skirtSize - 1);
-                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, skirtSize);
-                return SkirtVertexIndicesGenerated[lookup + faceArea * face];
+                flattened = math.clamp(flattened, 0, VoxelUtils.SKIRT_SIZE);
+                int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, VoxelUtils.SKIRT_SIZE);
+                return SkirtVertexIndicesGenerated[lookup + VoxelUtils.SKIRT_FACE * face];
             }
             else
             {
                 flattened = math.clamp(flattened, 0, PaddedChunkSize.x - 1);
                 int lookup = VoxelUtils.PosToIndex2D((uint2)flattened, PaddedChunkSize.x);
-                return SkirtVertexIndicesCopied[lookup + faceArea * face];
+                return SkirtVertexIndicesCopied[lookup + VoxelUtils.FACE * face];
             }
         }
 
@@ -74,8 +70,7 @@ namespace OptIn.Voxel.Meshing
             {
                 if (force)
                 {
-                    int faceIndexSize = PaddedChunkSize.x * PaddedChunkSize.y * 6;
-                    var faceIndicesSubArray = SkirtForcedPerFaceIndices.GetSubArray(face * faceIndexSize, faceIndexSize);
+                    var faceIndicesSubArray = SkirtForcedPerFaceIndices.GetSubArray(face * VoxelUtils.SKIRT_FACE * 6, VoxelUtils.SKIRT_FACE * 6);
                     AddQuadsOrTris(data, SkirtForcedTriangleCounter.ToConcurrentNativeCounter(face), faceIndicesSubArray);
                 }
                 else
@@ -117,7 +112,6 @@ namespace OptIn.Voxel.Meshing
             }
         }
 
-        // [修复] 重构if-else逻辑以避免变量重定义
         private static bool TryCalculateQuadOrTris(bool flip, int4 v, out Triangulate data)
         {
             data = default;
@@ -174,8 +168,7 @@ namespace OptIn.Voxel.Meshing
             uint2 flattened = VoxelUtils.IndexToPos2D(localIndex, PaddedChunkSize.x);
             uint3 position = VoxelUtils.UnflattenFromFaceRelative(flattened, direction, missing);
 
-            // [修复] uint2 >= int 比较错误
-            if (math.any(flattened >= (uint)(PaddedChunkSize.x - 1))) return;
+            if (math.any(flattened >= (uint)(VoxelUtils.SKIRT_SIZE - 1))) return;
 
             for (int i = 0; i < 3; i++)
             {
