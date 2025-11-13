@@ -1,16 +1,15 @@
+using Mono.Cecil.Cil;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
-
 public class TerrainAuthoring : MonoBehaviour
 {
     public int3 ChunkSize = new int3(32, 32, 32);
     public int3 PaddedChunkSize => ChunkSize + 2;
     public int2 ChunkSpawnSize = new int2(8, 8);
     public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader; // 保留 ComputeShader 引用
+    public ComputeShader VoxelComputeShader;
     public int MeshJobsPerTick = 4;
-
     class Baker : Baker<TerrainAuthoring>
     {
         public override void Bake(TerrainAuthoring authoring)
@@ -32,18 +31,16 @@ public class TerrainAuthoring : MonoBehaviour
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
-                VoxelComputeShader = authoring.VoxelComputeShader // 在 Baker 中烘焙
+                VoxelComputeShader = authoring.VoxelComputeShader
             });
         }
     }
 }
-
 public class TerrainResources : IComponentData
 {
     public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader; // 重新添加
+    public ComputeShader VoxelComputeShader;
 }
-
 public struct TerrainMesherConfig : IComponentData
 {
     public int MeshJobsPerTick;

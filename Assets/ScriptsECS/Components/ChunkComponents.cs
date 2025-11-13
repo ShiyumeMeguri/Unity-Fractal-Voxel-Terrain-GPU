@@ -1,4 +1,4 @@
-using OptIn.Voxel;
+// Components/ChunkComponents.cs
 using OptIn.Voxel.Meshing;
 using Unity.Collections;
 using Unity.Entities;
@@ -25,7 +25,7 @@ public struct TerrainSkirtLinkedParent : IComponentData
 
 public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
 {
-    public NativeArray<VoxelData> Voxels;
+    public NativeArray<OptIn.Voxel.VoxelData> Voxels;
     public JobHandle AsyncWriteJobHandle;
     public JobHandle AsyncReadJobHandle;
     public bool MeshingInProgress;
@@ -41,6 +41,7 @@ public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
         }
     }
 }
+
 
 public struct TerrainChunkMesh : IComponentData, IEnableableComponent
 {
@@ -84,7 +85,6 @@ public struct TerrainChunkMesh : IComponentData, IEnableableComponent
 
 public struct TerrainChunkRequestReadbackTag : IComponentData, IEnableableComponent
 {
-    // [修复] 重新添加此字段
     public bool SkipMeshingIfEmpty;
 }
 

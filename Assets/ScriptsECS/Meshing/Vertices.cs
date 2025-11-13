@@ -1,3 +1,4 @@
+// Meshing/Vertices.cs
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
@@ -16,8 +17,8 @@ namespace OptIn.Voxel.Meshing
 
             public void Add(float3 startVertex, float3 endVertex, int startIndex, int endIndex, ref NativeArray<VoxelData> voxels, ref NativeArray<float3> voxelNormals)
             {
-                var start = voxels[startIndex];
-                var end = voxels[endIndex];
+                VoxelData start = voxels[startIndex];
+                VoxelData end = voxels[endIndex];
                 float value = math.unlerp(start.Density, end.Density, 0);
                 AddLerped(startVertex, endVertex, startIndex, endIndex, value, ref voxels, ref voxelNormals);
             }
@@ -34,7 +35,7 @@ namespace OptIn.Voxel.Meshing
                 if (count > 0)
                 {
                     position /= count;
-                    normal = math.normalizesafe(normal);
+                    normal = math.normalizesafe(normal, new float3(0, 1, 0)); // Add a default up vector
                     layers /= count;
                 }
             }
@@ -47,16 +48,22 @@ namespace OptIn.Voxel.Meshing
 
         public Vertices(int count, Allocator allocator)
         {
-            positions = new NativeArray<float3>(count, allocator);
-            normals = new NativeArray<float3>(count, allocator);
-            layers = new NativeArray<float4>(count, allocator);
-            colours = new NativeArray<float4>(count, allocator);
+            positions = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
+            normals = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
+            layers = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
+            colours = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
         }
 
         public Single this[int index]
         {
             get => new Single { position = positions[index], normal = normals[index], layers = layers[index], colour = colours[index] };
-            set { positions[index] = value.position; normals[index] = value.normal; layers[index] = value.layers; colours[index] = value.colour; }
+            set
+            {
+                positions[index] = value.position;
+                normals[index] = value.normal;
+                layers[index] = value.layers;
+                colours[index] = value.colour;
+            }
         }
 
         public void SetMeshDataAttributes(int count, Mesh.MeshData data)
@@ -65,18 +72,37 @@ namespace OptIn.Voxel.Meshing
 
             var descriptors = new NativeArray<VertexAttributeDescriptor>(4, Allocator.Temp)
             {
-                [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, stream: 0),
-                [1] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, stream: 1),
-                [2] = new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.Float32, 4, stream: 2),
-                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 4, stream: 3)
+                [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float16, 4),
+                [1] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.SNorm8, 4),
+                [2] = new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.UNorm8, 4),
+                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.UNorm8, 4)
             };
             data.SetVertexBufferParams(count, descriptors);
             descriptors.Dispose();
 
-            positions.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 0));
-            normals.GetSubArray(0, count).CopyTo(data.GetVertexData<float3>(stream: 1));
-            colours.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(stream: 2));
-            layers.GetSubArray(0, count).CopyTo(data.GetVertexData<float4>(stream: 3));
+            var dstPositions = data.GetVertexData<half4>();
+            for (int i = 0; i < count; i++)
+            {
+                dstPositions[i] = (half4)new float4(positions[i], 0);
+            }
+
+            var dstNormals = data.GetVertexData<uint>();
+            for (int i = 0; i < count; i++)
+            {
+                dstNormals[i] = BitUtils.PackSnorm8(new float4(normals[i], 0));
+            }
+
+            var dstColours = data.GetVertexData<uint>(stream: 2);
+            for (int i = 0; i < count; i++)
+            {
+                dstColours[i] = BitUtils.PackUnorm8(new float4(1, 1, 1, 1)); // Default white
+            }
+
+            var dstLayers = data.GetVertexData<uint>(stream: 3);
+            for (int i = 0; i < count; i++)
+            {
+                dstLayers[i] = BitUtils.PackUnorm8(layers[i]);
+            }
         }
 
         public void Dispose()

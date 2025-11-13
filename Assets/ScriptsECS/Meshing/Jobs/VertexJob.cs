@@ -1,3 +1,4 @@
+// Meshing/Jobs/VertexJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -19,13 +20,16 @@ namespace OptIn.Voxel.Meshing
         public void Execute(int index)
         {
             Indices[index] = int.MaxValue;
+
+            // [修复] 使用 int3 进行位置计算和比较
+            int3 position = VoxelUtils.To3DIndex(index, ChunkSize);
+            if (math.any(position >= ChunkSize - 2)) return;
+
             uint enabledCorners = Enabled[index];
             if (enabledCorners == 0 || enabledCorners == 255) return;
 
-            var pos = VoxelUtils.To3DIndex(index, ChunkSize);
-            if (math.any(pos >= ChunkSize - 2)) return;
-
             ushort code = EdgeMaskUtils.EDGE_MASKS[enabledCorners];
+            // [修复] 显式转换为 int 以消除歧义
             int count = math.countbits((int)code);
             if (count == 0) return;
 
@@ -34,16 +38,16 @@ namespace OptIn.Voxel.Meshing
             {
                 if (((code >> edge) & 1) == 0) continue;
 
-                uint3 startOffset = (uint3)VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[edge, 0]];
-                uint3 endOffset = (uint3)VoxelUtils.DC_VERT[VoxelUtils.DC_EDGE[edge, 1]];
-                int startIndex = VoxelUtils.To1DIndex((uint3)(pos + (int3)startOffset), ChunkSize);
-                int endIndex = VoxelUtils.To1DIndex((uint3)(pos + (int3)endOffset), ChunkSize);
+                uint3 startOffset = EdgePositionUtils.EDGE_POSITIONS_0[edge];
+                uint3 endOffset = EdgePositionUtils.EDGE_POSITIONS_1[edge];
 
+                int startIndex = VoxelUtils.To1DIndex((uint3)position + startOffset, ChunkSize);
+                int endIndex = VoxelUtils.To1DIndex((uint3)position + endOffset, ChunkSize);
                 vertex.Add((float3)startOffset, (float3)endOffset, startIndex, endIndex, ref Voxels, ref VoxelNormals);
             }
 
             vertex.Finalize(count);
-            vertex.position += pos;
+            vertex.position += position;
 
             int vertexIndex = VertexCounter.Increment();
             Indices[index] = vertexIndex;

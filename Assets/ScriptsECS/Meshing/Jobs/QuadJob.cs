@@ -1,4 +1,4 @@
-// Assets/ScriptsECS/Meshing/Jobs/QuadJob.cs
+// Meshing/Jobs/QuadJob.cs
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -44,25 +44,28 @@ namespace OptIn.Voxel.Meshing
         {
             int endIndex = index + VoxelUtils.To1DIndex((uint3)VoxelUtils.DC_AXES[direction], ChunkSize);
 
-            int4 indices = int.MaxValue;
-            for (int i = 0; i < 4; i++)
-            {
-                var cornerPos = pos + VoxelUtils.DC_ADJACENT[direction, i];
-                indices[i] = VertexIndices[VoxelUtils.To1DIndex((uint3)cornerPos, ChunkSize)];
-            }
+            // [修复] 正确获取四边形的四个顶点索引
+            int3 offset = pos + VoxelUtils.DC_AXES[direction] - 1;
+            int4 indices;
+            indices.x = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 0]), ChunkSize)];
+            indices.y = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 1]), ChunkSize)];
+            indices.z = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 2]), ChunkSize)];
+            indices.w = VertexIndices[VoxelUtils.To1DIndex((uint3)(offset + (int3)DirectionOffsetUtils.PERPENDICULAR_OFFSETS[direction * 4 + 3]), ChunkSize)];
 
-            if (math.cmax(indices) == int.MaxValue) return;
+            // [修复] 采用更明确的检查方式
+            if (indices.x == int.MaxValue || indices.y == int.MaxValue || indices.z == int.MaxValue || indices.w == int.MaxValue) return;
 
             int triIndex = TriangleCounter.Add(2) * 3;
-            bool flip = Voxels[endIndex].Density >= 0.0;
+            bool flip = Voxels[endIndex].Density < 0.0f;
 
-            Triangles[triIndex + (flip ? 0 : 2)] = indices[0];
-            Triangles[triIndex + 1] = indices[1];
-            Triangles[triIndex + (flip ? 2 : 0)] = indices[2];
+            // [修复] 调整顶点顺序以匹配参考代码的三角形生成方式
+            Triangles[triIndex + (flip ? 0 : 2)] = indices.x;
+            Triangles[triIndex + 1] = indices.y;
+            Triangles[triIndex + (flip ? 2 : 0)] = indices.z;
 
-            Triangles[triIndex + 3] = indices[0];
-            Triangles[triIndex + 4] = indices[2];
-            Triangles[triIndex + 5] = indices[3];
+            Triangles[triIndex + 3] = indices.z;
+            Triangles[triIndex + 4] = indices.w;
+            Triangles[triIndex + 5] = indices.x;
         }
     }
 }
