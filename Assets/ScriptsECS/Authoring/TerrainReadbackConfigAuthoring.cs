@@ -1,7 +1,8 @@
 using Unity.Entities;
 using UnityEngine;
 
-namespace jedjoud.VoxelTerrain.Generation {
+namespace Ruri.Voxel
+{
     class TerrainReadbackConfigAuthoring : MonoBehaviour {
     }
 

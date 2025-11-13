@@ -1,6 +1,4 @@
 using System.Collections.Generic;
-using jedjoud.VoxelTerrain.Segments;
-using jedjoud.VoxelTerrain.Occlusion;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;

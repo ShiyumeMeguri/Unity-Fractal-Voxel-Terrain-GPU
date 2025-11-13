@@ -1,7 +1,8 @@
 using Unity.Entities;
 using UnityEngine;
 
-namespace jedjoud.VoxelTerrain {
+namespace Ruri.Voxel
+{
     class TerrainManagerConfigAuthoring : MonoBehaviour {
     }
 

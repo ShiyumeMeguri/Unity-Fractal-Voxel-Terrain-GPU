@@ -1,7 +1,8 @@
 using Unity.Entities;
 using UnityEngine;
 
-namespace jedjoud.VoxelTerrain.Edits {
+namespace Ruri.Voxel
+{
     class TerrainEditConfigAuthoring : MonoBehaviour {
     }
 
