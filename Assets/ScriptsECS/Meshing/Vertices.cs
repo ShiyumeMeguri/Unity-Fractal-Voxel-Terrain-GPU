@@ -1,4 +1,4 @@
-// Meshing/Vertices.cs
+﻿// Meshing/Vertices.cs
 using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
@@ -12,7 +12,7 @@ namespace Ruri.Voxel
         {
             public float3 position;
             public float3 normal;
-            public float4 layers;
+            public float4 uv;      // [新增] 用于存储UV和材质信息
             public float4 colour;
 
             public void Add(float3 startVertex, float3 endVertex, int startIndex, int endIndex, ref NativeArray<VoxelData> voxels, ref NativeArray<float3> voxelNormals)
@@ -27,7 +27,7 @@ namespace Ruri.Voxel
             {
                 position += math.lerp(startVertex, endVertex, value);
                 normal += math.lerp(voxelNormals[startIndex], voxelNormals[endIndex], value);
-                // layers and colours can be interpolated here if needed
+                // UVs 和其他数据将在 Meshing Job 中直接填充，这里不作插值
             }
 
             public void Finalize(int count)
@@ -35,33 +35,32 @@ namespace Ruri.Voxel
                 if (count > 0)
                 {
                     position /= count;
-                    normal = math.normalizesafe(normal, new float3(0, 1, 0)); // Add a default up vector
-                    layers /= count;
+                    normal = math.normalizesafe(normal, new float3(0, 1, 0));
                 }
             }
         }
 
         public NativeArray<float3> positions;
         public NativeArray<float3> normals;
-        public NativeArray<float4> layers;
+        public NativeArray<float4> uvs;
         public NativeArray<float4> colours;
 
         public Vertices(int count, Allocator allocator)
         {
             positions = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
             normals = new NativeArray<float3>(count, allocator, NativeArrayOptions.UninitializedMemory);
-            layers = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
+            uvs = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
             colours = new NativeArray<float4>(count, allocator, NativeArrayOptions.UninitializedMemory);
         }
 
         public Single this[int index]
         {
-            get => new Single { position = positions[index], normal = normals[index], layers = layers[index], colour = colours[index] };
+            get => new Single { position = positions[index], normal = normals[index], uv = uvs[index], colour = colours[index] };
             set
             {
                 positions[index] = value.position;
                 normals[index] = value.normal;
-                layers[index] = value.layers;
+                uvs[index] = value.uv;
                 colours[index] = value.colour;
             }
         }
@@ -70,38 +69,43 @@ namespace Ruri.Voxel
         {
             if (count == 0) return;
 
+            // [修正] 顶点属性描述符现在有4个流
             var descriptors = new NativeArray<VertexAttributeDescriptor>(4, Allocator.Temp)
             {
                 [0] = new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float16, 4),
                 [1] = new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.SNorm8, 4),
                 [2] = new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.UNorm8, 4),
-                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.UNorm8, 4)
+                [3] = new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float16, 4)
             };
             data.SetVertexBufferParams(count, descriptors);
             descriptors.Dispose();
 
+            // Stream 0: Position
             var dstPositions = data.GetVertexData<half4>();
             for (int i = 0; i < count; i++)
             {
                 dstPositions[i] = (half4)new float4(positions[i], 0);
             }
 
-            var dstNormals = data.GetVertexData<uint>();
+            // Stream 1: Normal
+            var dstNormals = data.GetVertexData<uint>(stream: 1); // [修正] 明确指定流索引
             for (int i = 0; i < count; i++)
             {
                 dstNormals[i] = BitUtils.PackSnorm8(new float4(normals[i], 0));
             }
 
+            // Stream 2: Color
             var dstColours = data.GetVertexData<uint>(stream: 2);
             for (int i = 0; i < count; i++)
             {
-                dstColours[i] = BitUtils.PackUnorm8(new float4(1, 1, 1, 1)); // Default white
+                dstColours[i] = BitUtils.PackUnorm8(new float4(1, 1, 1, 1)); // 默认为白色
             }
 
-            var dstLayers = data.GetVertexData<uint>(stream: 3);
+            // Stream 3: TexCoord0 (UV)
+            var dstUVs = data.GetVertexData<half4>(stream: 3); // [修正] 获取TexCoord0的数据流
             for (int i = 0; i < count; i++)
             {
-                dstLayers[i] = BitUtils.PackUnorm8(layers[i]);
+                dstUVs[i] = (half4)uvs[i]; // 将我们的uvs数据写入
             }
         }
 
@@ -109,7 +113,7 @@ namespace Ruri.Voxel
         {
             if (positions.IsCreated) positions.Dispose();
             if (normals.IsCreated) normals.Dispose();
-            if (layers.IsCreated) layers.Dispose();
+            if (uvs.IsCreated) uvs.Dispose(); // [新增]
             if (colours.IsCreated) colours.Dispose();
         }
     }

@@ -92,7 +92,7 @@ namespace Ruri.Voxel
             if (length == 0) return;
             src.positions.GetSubArray(0, length).CopyTo(dst.positions.GetSubArray(dstOffset, length));
             src.normals.GetSubArray(0, length).CopyTo(dst.normals.GetSubArray(dstOffset, length));
-            src.layers.GetSubArray(0, length).CopyTo(dst.layers.GetSubArray(dstOffset, length));
+            src.uvs.GetSubArray(0, length).CopyTo(dst.uvs.GetSubArray(dstOffset, length));
             src.colours.GetSubArray(0, length).CopyTo(dst.colours.GetSubArray(dstOffset, length));
         }
 

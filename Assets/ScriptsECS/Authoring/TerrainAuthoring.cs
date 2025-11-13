@@ -2,11 +2,9 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
-using Ruri.Voxel; // [新增] 统一命名空间
 
 namespace Ruri.Voxel
 {
-    // [修正] 这是场景中唯一的配置入口，类似原框架的 Voxel Terrain GameObject
     public class TerrainAuthoring : MonoBehaviour
     {
         public int3 ChunkSize = new int3(32, 32, 32);

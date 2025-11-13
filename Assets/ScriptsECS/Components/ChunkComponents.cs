@@ -4,10 +4,10 @@ using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
 using System.Runtime.InteropServices;
+using UnityEngine; // For Bounds
 
 namespace Ruri.Voxel
 {
-    // [修正] 你的Voxel结构体被重命名为VoxelData以匹配框架，并移到此处
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
     public struct VoxelData
@@ -41,7 +41,6 @@ namespace Ruri.Voxel
         }
     }
 
-    // [修正] 遵循框架API，定义核心区块组件
     public struct Chunk : IComponentData
     {
         public int3 Position;
@@ -50,7 +49,6 @@ namespace Ruri.Voxel
         public BitField32 NeighbourMask;
     }
 
-    // [修正] 遵循框架API，定义体素数据组件
     public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
     {
         public NativeArray<VoxelData> Voxels;
@@ -70,11 +68,11 @@ namespace Ruri.Voxel
         }
     }
 
-    // [修正] 遵循框架API，定义网格数据组件
     public struct TerrainChunkMesh : IComponentData, IEnableableComponent
     {
         public NativeArray<float3> Vertices;
         public NativeArray<float3> Normals;
+        public NativeArray<float4> UVs; // [修正] 添加UVs字段
         public NativeArray<int> MainMeshIndices;
         public JobHandle AccessJobHandle;
 
@@ -82,12 +80,14 @@ namespace Ruri.Voxel
         {
             var vertices = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
             var normals = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
+            var uvs = new NativeArray<float4>(stats.VertexCount, Allocator.Persistent); // [修正] 分配UVs内存
             var indices = new NativeArray<int>(stats.MainMeshIndexCount, Allocator.Persistent);
 
             if (stats.VertexCount > 0)
             {
                 stats.Vertices.positions.GetSubArray(0, stats.VertexCount).CopyTo(vertices);
                 stats.Vertices.normals.GetSubArray(0, stats.VertexCount).CopyTo(normals);
+                stats.Vertices.uvs.GetSubArray(0, stats.VertexCount).CopyTo(uvs); // [修正] 复制UVs
             }
             if (stats.MainMeshIndexCount > 0)
             {
@@ -98,6 +98,7 @@ namespace Ruri.Voxel
             {
                 Vertices = vertices,
                 Normals = normals,
+                UVs = uvs, // [修正] 赋值
                 MainMeshIndices = indices,
             };
         }
@@ -107,11 +108,12 @@ namespace Ruri.Voxel
             AccessJobHandle.Complete();
             if (Vertices.IsCreated) Vertices.Dispose();
             if (Normals.IsCreated) Normals.Dispose();
+            if (UVs.IsCreated) UVs.Dispose(); // [修正] 释放UVs
             if (MainMeshIndices.IsCreated) MainMeshIndices.Dispose();
         }
     }
 
-    // --- [新增] 以下是完全遵循目标框架的状态标签 ---
+    // --- 状态标签 (State Machine Tags) ---
     public struct TerrainChunkRequestReadbackTag : IComponentData, IEnableableComponent
     {
         public bool SkipMeshingIfEmpty;
@@ -124,6 +126,8 @@ namespace Ruri.Voxel
     public struct TerrainChunkRequestCollisionTag : IComponentData, IEnableableComponent { }
     public struct TerrainChunkEndOfPipeTag : IComponentData, IEnableableComponent { }
     public struct TerrainDeferredVisible : IComponentData, IEnableableComponent { }
+
+    // --- 裙边实体组件 ---
     public struct TerrainSkirt : IComponentData
     {
         public byte Direction;

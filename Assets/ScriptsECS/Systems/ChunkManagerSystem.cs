@@ -23,7 +23,7 @@ public partial struct ChunkManagerSystem : ISystem
         _chunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
         _prototypesCreated = false;
 
-        state.RequireForUpdate<PlayerTag>();
+        state.RequireForUpdate<TerrainLoader>();
         state.RequireForUpdate<TerrainConfig>();
         state.EntityManager.CreateSingleton<TerrainReadySystems>();
     }
@@ -31,10 +31,8 @@ public partial struct ChunkManagerSystem : ISystem
     [BurstCompile]
     public void OnDestroy(ref SystemState state)
     {
-        // 确保在销毁前所有依赖的Job已完成
         state.Dependency.Complete();
 
-        // 销毁所有区块及其关联的Native资源
         foreach (var pair in _chunkMap)
         {
             if (!state.EntityManager.Exists(pair.Value)) continue;
@@ -57,31 +55,38 @@ public partial struct ChunkManagerSystem : ISystem
         if (!_prototypesCreated) CreatePrototypes(ref state);
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.manager = true; // 默认准备就绪，除非有增删操作
+        readySystems.manager = true;
 
-        if (!SystemAPI.TryGetSingletonEntity<PlayerTag>(out var playerEntity)) return;
-        var playerPos = SystemAPI.GetComponent<LocalToWorld>(playerEntity).Position;
+        if (!SystemAPI.TryGetSingletonEntity<TerrainLoader>(out var loaderEntity)) return;
+        var loaderPos = SystemAPI.GetComponent<LocalToWorld>(loaderEntity).Position;
+
+        // 更新Loader组件
+        var loader = SystemAPI.GetComponentRW<TerrainLoader>(loaderEntity);
+        loader.ValueRW.Position = loaderPos;
+
         var config = SystemAPI.GetSingleton<TerrainConfig>();
-        var playerChunkPos = VoxelUtils.WorldToChunk(playerPos, config.ChunkSize);
+        var playerChunkPos = VoxelUtils.WorldToChunk(loaderPos, config.ChunkSize);
 
-        if (math.all(playerChunkPos == _lastPlayerChunkPos))
+        if (math.all(playerChunkPos == loader.ValueRO.LastChunkPosition))
         {
-            UpdateChunkNeighbours(ref state); // 即使不移动，邻居状态也可能变化
+            UpdateChunkNeighbours(ref state);
             return;
         }
 
-        _lastPlayerChunkPos = playerChunkPos;
+        loader.ValueRW.LastChunkPosition = playerChunkPos;
         var ecb = new EntityCommandBuffer(Allocator.TempJob);
 
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.Temp);
         var spawnSize = config.ChunkSpawnSize;
 
+        // Y轴不生成，保持和你OOP逻辑一致
         for (int x = -spawnSize.x; x <= spawnSize.x; x++)
-            for (int y = -spawnSize.y; y <= spawnSize.y; y++)
-                for (int z = -spawnSize.x; z <= spawnSize.x; z++)
-                {
-                    requiredChunks.Add(playerChunkPos + new int3(x, y, z));
-                }
+        {
+            for (int z = -spawnSize.x; z <= spawnSize.x; z++)
+            {
+                requiredChunks.Add(playerChunkPos + new int3(x, 0, z)); // 假设Y轴固定在0
+            }
+        }
 
         var chunksToDestroy = new NativeList<Entity>(Allocator.Temp);
         var keysToRemove = new NativeList<int3>(Allocator.Temp);
@@ -100,7 +105,6 @@ public partial struct ChunkManagerSystem : ISystem
         {
             if (SystemAPI.Exists(entity))
             {
-                // 组件的Dispose将在OnDestroy中统一处理，这里只销毁实体
                 ecb.DestroyEntity(entity);
             }
         }
@@ -133,10 +137,9 @@ public partial struct ChunkManagerSystem : ISystem
             _chunkMap.TryAdd(pos, newChunk);
         }
 
-        state.Dependency.Complete(); // 确保在回放前，所有可能影响的Job都已完成
+        state.Dependency.Complete();
         ecb.Playback(state.EntityManager);
 
-        // 清理临时容器
         requiredChunks.Dispose();
         chunksToDestroy.Dispose();
         keysToRemove.Dispose();
@@ -146,15 +149,13 @@ public partial struct ChunkManagerSystem : ISystem
 
     private void CreatePrototypes(ref SystemState state)
     {
-        if (_prototypesCreated) return;
-
         var mgr = state.EntityManager;
         _chunkPrototype = mgr.CreateEntity();
 
         mgr.AddComponent<LocalTransform>(_chunkPrototype);
         mgr.AddComponent<LocalToWorld>(_chunkPrototype);
         mgr.AddComponent<Chunk>(_chunkPrototype);
-        mgr.AddComponent<TerrainChunkVoxels>(_chunkPrototype); // 添加空容器，将在Readback后填充
+        mgr.AddComponent<TerrainChunkVoxels>(_chunkPrototype);
         mgr.AddComponent<TerrainChunkRequestReadbackTag>(_chunkPrototype);
         mgr.AddComponent<TerrainChunkVoxelsReadyTag>(_chunkPrototype);
         mgr.AddComponent<TerrainChunkRequestMeshingTag>(_chunkPrototype);
@@ -207,13 +208,11 @@ public partial struct ChunkManagerSystem : ISystem
             for (int i = 0; i < 27; i++)
             {
                 int3 offset = (int3)VoxelUtils.IndexToPos(i, 3) - 1;
-                int3 neighbourPos = chunk.Position + offset;
-                if (ChunkMap.ContainsKey(neighbourPos))
+                if (ChunkMap.ContainsKey(chunk.Position + offset))
                 {
                     neighbourMask.SetBits(i, true);
                 }
             }
-
             chunk.NeighbourMask = neighbourMask;
             chunk.SkirtMask = CalculateEnabledSkirtMask(neighbourMask);
         }

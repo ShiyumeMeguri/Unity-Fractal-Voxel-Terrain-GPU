@@ -2,7 +2,6 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
-using Ruri.Voxel; // [新增] 统一命名空间
 
 namespace Ruri.Voxel
 {
@@ -26,12 +25,12 @@ namespace Ruri.Voxel
 
     public struct VoxelEditRequest : IComponentData
     {
-        public enum EditType { SetBlock, ModifySphere } // [修正] 遵循OOP中的ModifySphere功能
+        public enum EditType { SetBlock, ModifySphere }
 
         public EditType Type;
         public float3 WorldPosition;
-        public float Radius; // 用于球体编辑
-        public float Intensity; // 用于球体编辑
-        public short VoxelID; // 对于SetBlock是方块ID，对于ModifySphere是材质ID
+        public float Radius;
+        public float Intensity;
+        public short VoxelID;
     }
 }
