@@ -9,6 +9,9 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+// 1. 定义一个Tag，用于标记正在等待数据解包的实体批次
+public struct AwaitingVoxelDataUnpackTag : IComponentData { }
+
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(ChunkManagerSystem))]
 public partial class TerrainReadbackSystem : SystemBase
@@ -18,12 +21,10 @@ public partial class TerrainReadbackSystem : SystemBase
     private enum SystemState
     {
         Idle,
-        DispatchingAndAwaitingReadback,
-        ProcessingData
+        DispatchingAndAwaitingReadback
     }
 
     private SystemState _currentState;
-    private List<(Entity Entity, bool SkipMeshingIfEmpty)> _batchInfo;
     private JobHandle _processingHandle;
 
     private ComputeBuffer _voxelBuffer;
@@ -33,13 +34,15 @@ public partial class TerrainReadbackSystem : SystemBase
     private bool _isInitialized;
     private volatile bool _dataIsReady;
 
+    // 存储当前批次的信息，以便在下一帧的Job中使用
+    private NativeHashMap<Entity, int> _entityToIndexMap;
+
     protected override void OnCreate()
     {
         RequireForUpdate<TerrainConfig>();
         RequireForUpdate<TerrainResources>();
         RequireForUpdate<TerrainChunkRequestReadbackTag>();
 
-        _batchInfo = new List<(Entity, bool)>(BATCH_SIZE);
         _currentState = SystemState.Idle;
         _isInitialized = false;
         _processingHandle = default;
@@ -57,6 +60,7 @@ public partial class TerrainReadbackSystem : SystemBase
             _voxelBuffer = new ComputeBuffer(totalVoxels, sizeof(uint), ComputeBufferType.Structured);
             _readbackData = new NativeArray<uint>(totalVoxels, Allocator.Persistent);
             _signCounters = new NativeArray<int>(BATCH_SIZE, Allocator.Persistent);
+            _entityToIndexMap = new NativeHashMap<Entity, int>(BATCH_SIZE, Allocator.Persistent);
         }
         else
         {
@@ -74,6 +78,7 @@ public partial class TerrainReadbackSystem : SystemBase
         {
             if (_readbackData.IsCreated) _readbackData.Dispose();
             if (_signCounters.IsCreated) _signCounters.Dispose();
+            if (_entityToIndexMap.IsCreated) _entityToIndexMap.Dispose();
             _voxelBuffer?.Release();
         }
     }
@@ -85,36 +90,26 @@ public partial class TerrainReadbackSystem : SystemBase
             Initialize();
         }
 
+        // 必须先完成上一帧的所有处理
+        _processingHandle.Complete();
+
+        // 2. 应用上一帧处理的结果
+        ApplyProcessingResults();
+
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
-        readySystems.readback = (_currentState == SystemState.Idle && _processingHandle.IsCompleted);
+        readySystems.readback = (_currentState == SystemState.Idle);
 
-        // 必须在状态切换前完成上一帧的依赖
-        Dependency.Complete();
-
-        switch (_currentState)
+        if (_currentState == SystemState.Idle)
         {
-            case SystemState.Idle:
-                if (_processingHandle.IsCompleted)
-                {
-                    TryBeginReadback();
-                }
-                break;
-
-            case SystemState.DispatchingAndAwaitingReadback:
-                if (_dataIsReady)
-                {
-                    ScheduleProcessingJobs();
-                    _currentState = SystemState.ProcessingData;
-                }
-                break;
-
-            case SystemState.ProcessingData:
-                if (_processingHandle.IsCompleted)
-                {
-                    ApplyProcessingResults();
-                    ResetState();
-                }
-                break;
+            // 3. 尝试开始新的读回
+            TryBeginReadback();
+        }
+        else if (_currentState == SystemState.DispatchingAndAwaitingReadback && _dataIsReady)
+        {
+            // 4. GPU数据已返回，调度本帧的CPU处理作业
+            ScheduleProcessingJobs();
+            _currentState = SystemState.Idle;
+            _dataIsReady = false;
         }
     }
 
@@ -135,8 +130,7 @@ public partial class TerrainReadbackSystem : SystemBase
         if (numToProcess == 0) return;
 
         _currentState = SystemState.DispatchingAndAwaitingReadback;
-        _batchInfo.Clear();
-        _dataIsReady = false;
+        _entityToIndexMap.Clear();
 
         var cmd = CommandBufferPool.Get("Voxel Generation");
         var compute = resources.VoxelComputeShader;
@@ -151,15 +145,16 @@ public partial class TerrainReadbackSystem : SystemBase
         for (int i = 0; i < numToProcess; i++)
         {
             Entity entity = entities[i];
-            var requestTag = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity);
-            _batchInfo.Add((entity, requestTag.SkipMeshingIfEmpty));
-            var chunk = SystemAPI.GetComponent<Chunk>(entity);
+            _entityToIndexMap.Add(entity, i);
 
+            EntityManager.AddComponent<AwaitingVoxelDataUnpackTag>(entity);
+            EntityManager.SetComponentEnabled<TerrainChunkRequestReadbackTag>(entity, false);
+
+            var chunk = SystemAPI.GetComponent<Chunk>(entity);
             cmd.SetComputeIntParam(compute, "baseIndex", i * voxelsPerChunk);
             cmd.SetComputeIntParams(compute, "chunkPosition", chunk.Position.x, chunk.Position.y, chunk.Position.z);
             cmd.SetComputeIntParams(compute, "chunkSize", paddedChunkSize.x, paddedChunkSize.y, paddedChunkSize.z);
             cmd.DispatchCompute(compute, kernel, groups.x, groups.y, groups.z);
-            EntityManager.SetComponentEnabled<TerrainChunkRequestReadbackTag>(entity, false);
         }
 
         Graphics.ExecuteCommandBuffer(cmd);
@@ -175,7 +170,7 @@ public partial class TerrainReadbackSystem : SystemBase
         if (request.hasError)
         {
             Debug.LogError("GPU Readback Error.");
-            _dataIsReady = true; // 即使出错也要设置标志，以便系统可以重置
+            _dataIsReady = true;
             return;
         }
 
@@ -186,51 +181,19 @@ public partial class TerrainReadbackSystem : SystemBase
     private void ScheduleProcessingJobs()
     {
         var config = SystemAPI.GetSingleton<TerrainConfig>();
-        int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
-        var entitiesToProcess = new NativeArray<Entity>(_batchInfo.Count, Allocator.TempJob);
-        for (int i = 0; i < _batchInfo.Count; ++i)
+        var unpackJob = new UnpackVoxelDataJobChunk
         {
-            Entity entity = _batchInfo[i].Entity;
-            if (SystemAPI.Exists(entity))
-            {
-                var voxels = new TerrainChunkVoxels
-                {
-                    Voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent)
-                };
-                EntityManager.AddComponentData(entity, voxels);
-                entitiesToProcess[i] = entity;
-            }
-            else
-            {
-                entitiesToProcess[i] = Entity.Null;
-            }
-        }
-
-        var unpackJob = new UnpackVoxelDataBatchJob
-        {
-            Entities = entitiesToProcess,
-            ChunkVoxelsLookup = GetComponentLookup<TerrainChunkVoxels>(false),
-            Source = _readbackData,
-            Counters = _signCounters,
-            VoxelsPerChunk = voxelsPerChunk,
+            VoxelDataTypeHandle = GetComponentTypeHandle<TerrainChunkVoxels>(false),
+            EntityTypeHandle = GetEntityTypeHandle(),
+            EntityToIndexMap = _entityToIndexMap.AsReadOnly(),
+            SourceData = _readbackData,
+            SignCounters = _signCounters,
+            VoxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z,
         };
 
-        // 确保新的 Job 链等待上一个 Job 链完成
-        _processingHandle = unpackJob.Schedule(_batchInfo.Count, 1, JobHandle.CombineDependencies(Dependency, _processingHandle));
-
-        // 在主线程上为所有新创建的组件设置 JobHandle
-        for (int i = 0; i < _batchInfo.Count; i++)
-        {
-            Entity entity = entitiesToProcess[i];
-            if (entity != Entity.Null)
-            {
-                var voxels = EntityManager.GetComponentData<TerrainChunkVoxels>(entity);
-                voxels.AsyncWriteJobHandle = _processingHandle;
-                EntityManager.SetComponentData(entity, voxels);
-            }
-        }
-
+        var query = GetEntityQuery(ComponentType.ReadWrite<TerrainChunkVoxels>(), ComponentType.ReadOnly<AwaitingVoxelDataUnpackTag>());
+        _processingHandle = unpackJob.ScheduleParallel(query, Dependency);
         Dependency = _processingHandle;
     }
 
@@ -238,66 +201,85 @@ public partial class TerrainReadbackSystem : SystemBase
     {
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
+        var ecb = new EntityCommandBuffer(Allocator.Temp);
 
-        for (int i = 0; i < _batchInfo.Count; i++)
+        // 使用 _entityToIndexMap 来查找正确的批次索引和实体
+        foreach (var pair in _entityToIndexMap)
         {
-            Entity entity = _batchInfo[i].Entity;
+            Entity entity = pair.Key;
+            int batchIndex = pair.Value;
+
             if (!SystemAPI.Exists(entity)) continue;
 
-            bool isEmpty = math.abs(_signCounters[i]) == voxelsPerChunk;
-            bool skipIfEmpty = _batchInfo[i].SkipMeshingIfEmpty;
+            var requestTag = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity); // 之前被禁用了，但数据还在
+            bool isEmpty = math.abs(_signCounters[batchIndex]) == voxelsPerChunk;
 
-            SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
+            ecb.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
 
-            if (isEmpty && skipIfEmpty)
+            if (isEmpty && requestTag.SkipMeshingIfEmpty)
             {
-                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
-                SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+                ecb.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
+                ecb.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
             }
             else
             {
-                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
+                ecb.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
             }
+
+            // 移除Tag，表示处理完成
+            ecb.RemoveComponent<AwaitingVoxelDataUnpackTag>(entity);
         }
+
+        ecb.Playback(EntityManager);
     }
 
     private void ResetState()
     {
         _currentState = SystemState.Idle;
-        _batchInfo.Clear();
     }
 
     [BurstCompile]
-    private struct UnpackVoxelDataBatchJob : IJobParallelFor
+    private struct UnpackVoxelDataJobChunk : IJobChunk
     {
-        [DeallocateOnJobCompletion][ReadOnly] public NativeArray<Entity> Entities;
-        [NativeDisableParallelForRestriction] public ComponentLookup<TerrainChunkVoxels> ChunkVoxelsLookup;
+        public ComponentTypeHandle<TerrainChunkVoxels> VoxelDataTypeHandle;
+        [ReadOnly] public EntityTypeHandle EntityTypeHandle;
 
-        [ReadOnly] public NativeArray<uint> Source;
-        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<int> Counters;
+        [ReadOnly] public NativeHashMap<Entity, int>.ReadOnly EntityToIndexMap;
+        [ReadOnly] public NativeArray<uint> SourceData;
+
+        [WriteOnly]
+        [NativeDisableParallelForRestriction] // 安全：每个并行的 Execute 调用会写入到不同的索引
+        public NativeArray<int> SignCounters;
 
         public int VoxelsPerChunk;
 
-        public void Execute(int i)
+        public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in Unity.Burst.Intrinsics.v128 chunkEnabledMask)
         {
-            Entity entity = Entities[i];
-            if (entity == Entity.Null) return;
+            var entities = chunk.GetNativeArray(EntityTypeHandle);
+            var chunkVoxelsArray = chunk.GetNativeArray(ref VoxelDataTypeHandle);
 
-            var chunkVoxels = ChunkVoxelsLookup[entity];
-            var sourceSlice = Source.GetSubArray(i * VoxelsPerChunk, VoxelsPerChunk);
-
-            int signSum = 0;
-            for (int j = 0; j < sourceSlice.Length; j++)
+            for (int i = 0; i < chunk.Count; i++)
             {
-                uint packed = sourceSlice[j];
-                short voxelID = (short)(packed & 0xFFFF);
-                short metadata = (short)(packed >> 16);
-                var voxel = new VoxelData { voxelID = voxelID, metadata = metadata };
-                chunkVoxels.Voxels[j] = voxel;
+                var entity = entities[i];
+                var chunkVoxels = chunkVoxelsArray[i];
+                var batchIndex = EntityToIndexMap[entity];
 
-                signSum += voxel.IsSolid ? 1 : -1;
+                var sourceSlice = SourceData.GetSubArray(batchIndex * VoxelsPerChunk, VoxelsPerChunk);
+                var destination = chunkVoxels.Voxels;
+
+                int signSum = 0;
+                for (int j = 0; j < sourceSlice.Length; j++)
+                {
+                    uint packed = sourceSlice[j];
+                    short voxelID = (short)(packed & 0xFFFF);
+                    short metadata = (short)(packed >> 16);
+                    var voxel = new VoxelData { voxelID = voxelID, metadata = metadata };
+                    destination[j] = voxel;
+
+                    signSum += voxel.IsSolid ? 1 : -1;
+                }
+                SignCounters[batchIndex] = signSum;
             }
-            Counters[i] = signSum;
         }
     }
 }
