@@ -115,9 +115,12 @@ namespace Ruri.Voxel
 
         public static readonly int[] CubeIndices =
         {
-            0, 2, 1, 0, 3, 2, // [修正] 修正为正确的绕序
-            4, 5, 6, 4, 6, 7,
-            // ... etc for all 6 faces
+            0, 3, 1, 0, 2, 3, // Right Face
+            1, 3, 0, 3, 2, 0, // Left Face
+            0, 3, 1, 0, 2, 3, // Top Face
+            1, 3, 0, 3, 2, 0, // Bottom Face
+            1, 3, 0, 3, 2, 0, // Front Face
+            0, 3, 1, 0, 2, 3  // Back Face
         };
 
         public static readonly int3[] VoxelDirectionOffsets =
