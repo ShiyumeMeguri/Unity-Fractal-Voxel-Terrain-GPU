@@ -1,4 +1,5 @@
-using OptIn.Voxel;
+// Systems/ChunkManagerSystem.cs
+using Ruri.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
@@ -9,107 +10,68 @@ using Unity.Transforms;
 [BurstCompile]
 public partial struct ChunkManagerSystem : ISystem
 {
-    private int3 _LastPlayerChunkPos;
-    private Entity _ChunkPrototype;
-    private Entity _SkirtPrototype;
-    private NativeHashMap<int3, Entity> _ChunkMap;
-    private bool _PrototypesCreated;
+    private int3 _lastPlayerChunkPos;
+    private Entity _chunkPrototype;
+    private Entity _skirtPrototype;
+    private NativeHashMap<int3, Entity> _chunkMap;
+    private bool _prototypesCreated;
 
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        _LastPlayerChunkPos = new int3(int.MinValue);
-        _ChunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
-        _PrototypesCreated = false;
+        _lastPlayerChunkPos = new int3(int.MinValue);
+        _chunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
+        _prototypesCreated = false;
 
         state.RequireForUpdate<PlayerTag>();
         state.RequireForUpdate<TerrainConfig>();
         state.EntityManager.CreateSingleton<TerrainReadySystems>();
     }
 
-    private void CreatePrototypes(ref SystemState state)
-    {
-        if (_PrototypesCreated) return;
-
-        var mgr = state.EntityManager;
-        _ChunkPrototype = mgr.CreateEntity();
-
-        // [修复] 重新添加 LocalTransform
-        mgr.AddComponent<LocalTransform>(_ChunkPrototype);
-        mgr.AddComponent<LocalToWorld>(_ChunkPrototype);
-        mgr.AddComponent<Chunk>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkRequestReadbackTag>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkVoxelsReadyTag>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkRequestMeshingTag>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkMesh>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkRequestCollisionTag>(_ChunkPrototype);
-        mgr.AddComponent<TerrainChunkEndOfPipeTag>(_ChunkPrototype);
-        mgr.AddComponent<TerrainDeferredVisible>(_ChunkPrototype);
-        mgr.AddComponent<Prefab>(_ChunkPrototype);
-
-        mgr.SetComponentEnabled<TerrainChunkMesh>(_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkRequestMeshingTag>(_ChunkPrototype, true);
-        mgr.SetComponentEnabled<TerrainChunkRequestCollisionTag>(_ChunkPrototype, true);
-        mgr.SetComponentEnabled<TerrainChunkEndOfPipeTag>(_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainDeferredVisible>(_ChunkPrototype, false);
-        mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(_ChunkPrototype, true);
-
-        _SkirtPrototype = mgr.CreateEntity();
-
-        // [修复] 重新添加 LocalTransform
-        mgr.AddComponent<LocalTransform>(_SkirtPrototype);
-        mgr.AddComponent<LocalToWorld>(_SkirtPrototype);
-        mgr.AddComponent<TerrainSkirt>(_SkirtPrototype);
-        mgr.AddComponent<TerrainDeferredVisible>(_SkirtPrototype);
-        mgr.AddComponent<TerrainSkirtLinkedParent>(_SkirtPrototype);
-        mgr.AddComponent<Prefab>(_SkirtPrototype);
-        mgr.SetComponentEnabled<TerrainDeferredVisible>(_SkirtPrototype, false);
-
-        _PrototypesCreated = true;
-    }
-
     [BurstCompile]
     public void OnDestroy(ref SystemState state)
     {
+        // 确保在销毁前所有依赖的Job已完成
         state.Dependency.Complete();
-        foreach (var pair in _ChunkMap)
+
+        // 销毁所有区块及其关联的Native资源
+        foreach (var pair in _chunkMap)
         {
             if (!state.EntityManager.Exists(pair.Value)) continue;
 
             if (SystemAPI.HasComponent<TerrainChunkVoxels>(pair.Value) && SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(pair.Value))
             {
-                SystemAPI.GetComponent<TerrainChunkVoxels>(pair.Value).Dispose(state.Dependency);
+                SystemAPI.GetComponent<TerrainChunkVoxels>(pair.Value).Dispose();
             }
             if (SystemAPI.HasComponent<TerrainChunkMesh>(pair.Value) && SystemAPI.IsComponentEnabled<TerrainChunkMesh>(pair.Value))
             {
                 SystemAPI.GetComponent<TerrainChunkMesh>(pair.Value).Dispose();
             }
         }
-        if (_ChunkMap.IsCreated) _ChunkMap.Dispose();
+        if (_chunkMap.IsCreated) _chunkMap.Dispose();
     }
 
     [BurstCompile]
     public void OnUpdate(ref SystemState state)
     {
-        CreatePrototypes(ref state);
+        if (!_prototypesCreated) CreatePrototypes(ref state);
 
-        var readySystems = SystemAPI.GetSingletonRW<TerrainReadySystems>();
-        readySystems.ValueRW.manager = true;
+        ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
+        readySystems.manager = true; // 默认准备就绪，除非有增删操作
 
         if (!SystemAPI.TryGetSingletonEntity<PlayerTag>(out var playerEntity)) return;
         var playerPos = SystemAPI.GetComponent<LocalToWorld>(playerEntity).Position;
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         var playerChunkPos = VoxelUtils.WorldToChunk(playerPos, config.ChunkSize);
 
-        if (math.all(playerChunkPos == _LastPlayerChunkPos))
+        if (math.all(playerChunkPos == _lastPlayerChunkPos))
         {
-            UpdateChunkNeighbours(ref state);
+            UpdateChunkNeighbours(ref state); // 即使不移动，邻居状态也可能变化
             return;
         }
 
-        _LastPlayerChunkPos = playerChunkPos;
-        var ecb = new EntityCommandBuffer(Allocator.Temp);
+        _lastPlayerChunkPos = playerChunkPos;
+        var ecb = new EntityCommandBuffer(Allocator.TempJob);
 
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.Temp);
         var spawnSize = config.ChunkSpawnSize;
@@ -123,7 +85,7 @@ public partial struct ChunkManagerSystem : ISystem
 
         var chunksToDestroy = new NativeList<Entity>(Allocator.Temp);
         var keysToRemove = new NativeList<int3>(Allocator.Temp);
-        foreach (var pair in _ChunkMap)
+        foreach (var pair in _chunkMap)
         {
             if (!requiredChunks.Contains(pair.Key))
             {
@@ -132,56 +94,95 @@ public partial struct ChunkManagerSystem : ISystem
             }
         }
 
-        if (chunksToDestroy.Length > 0) readySystems.ValueRW.manager = false;
+        if (chunksToDestroy.Length > 0) readySystems.manager = false;
 
         foreach (var entity in chunksToDestroy)
         {
             if (SystemAPI.Exists(entity))
             {
-                if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity) && SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(entity))
-                {
-                    SystemAPI.GetComponent<TerrainChunkVoxels>(entity).Dispose(state.Dependency);
-                }
-                if (SystemAPI.HasComponent<TerrainChunkMesh>(entity) && SystemAPI.IsComponentEnabled<TerrainChunkMesh>(entity))
-                {
-                    SystemAPI.GetComponent<TerrainChunkMesh>(entity).Dispose();
-                }
+                // 组件的Dispose将在OnDestroy中统一处理，这里只销毁实体
                 ecb.DestroyEntity(entity);
             }
         }
 
         foreach (var key in keysToRemove)
         {
-            _ChunkMap.Remove(key);
+            _chunkMap.Remove(key);
         }
 
         foreach (var pos in requiredChunks)
         {
-            if (_ChunkMap.ContainsKey(pos)) continue;
+            if (_chunkMap.ContainsKey(pos)) continue;
 
-            readySystems.ValueRW.manager = false;
+            readySystems.manager = false;
 
-            Entity newChunk = state.EntityManager.Instantiate(_ChunkPrototype);
+            Entity newChunk = ecb.Instantiate(_chunkPrototype);
 
             var skirts = new FixedList64Bytes<Entity>();
             for (byte i = 0; i < 6; i++)
             {
-                var skirt = state.EntityManager.Instantiate(_SkirtPrototype);
-                state.EntityManager.SetComponentData(skirt, new TerrainSkirt { Direction = i });
-                state.EntityManager.SetComponentData(skirt, new TerrainSkirtLinkedParent { ChunkParent = newChunk });
-                state.EntityManager.SetComponentData(skirt, LocalTransform.FromPosition(pos * config.ChunkSize));
+                var skirt = ecb.Instantiate(_skirtPrototype);
+                ecb.SetComponent(skirt, new TerrainSkirt { Direction = i });
+                ecb.SetComponent(skirt, new TerrainSkirtLinkedParent { ChunkParent = newChunk });
+                ecb.SetComponent(skirt, LocalTransform.FromPosition(pos * config.ChunkSize));
                 skirts.Add(skirt);
             }
 
-            state.EntityManager.SetComponentData(newChunk, new Chunk { Position = pos, Skirts = skirts });
-            state.EntityManager.SetComponentData(newChunk, LocalTransform.FromPosition(pos * config.ChunkSize));
-            _ChunkMap.TryAdd(pos, newChunk);
+            ecb.SetComponent(newChunk, new Chunk { Position = pos, Skirts = skirts });
+            ecb.SetComponent(newChunk, LocalTransform.FromPosition(pos * config.ChunkSize));
+            _chunkMap.TryAdd(pos, newChunk);
         }
 
+        state.Dependency.Complete(); // 确保在回放前，所有可能影响的Job都已完成
         ecb.Playback(state.EntityManager);
-        ecb.Dispose();
+
+        // 清理临时容器
+        requiredChunks.Dispose();
+        chunksToDestroy.Dispose();
+        keysToRemove.Dispose();
 
         UpdateChunkNeighbours(ref state);
+    }
+
+    private void CreatePrototypes(ref SystemState state)
+    {
+        if (_prototypesCreated) return;
+
+        var mgr = state.EntityManager;
+        _chunkPrototype = mgr.CreateEntity();
+
+        mgr.AddComponent<LocalTransform>(_chunkPrototype);
+        mgr.AddComponent<LocalToWorld>(_chunkPrototype);
+        mgr.AddComponent<Chunk>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkVoxels>(_chunkPrototype); // 添加空容器，将在Readback后填充
+        mgr.AddComponent<TerrainChunkRequestReadbackTag>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkVoxelsReadyTag>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkRequestMeshingTag>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkMesh>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkRequestCollisionTag>(_chunkPrototype);
+        mgr.AddComponent<TerrainChunkEndOfPipeTag>(_chunkPrototype);
+        mgr.AddComponent<TerrainDeferredVisible>(_chunkPrototype);
+        mgr.AddComponent<Prefab>(_chunkPrototype);
+
+        mgr.SetComponentEnabled<TerrainChunkVoxels>(_chunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkMesh>(_chunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(_chunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkRequestMeshingTag>(_chunkPrototype, true);
+        mgr.SetComponentEnabled<TerrainChunkRequestCollisionTag>(_chunkPrototype, true);
+        mgr.SetComponentEnabled<TerrainChunkEndOfPipeTag>(_chunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainDeferredVisible>(_chunkPrototype, false);
+        mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(_chunkPrototype, true);
+
+        _skirtPrototype = mgr.CreateEntity();
+        mgr.AddComponent<LocalTransform>(_skirtPrototype);
+        mgr.AddComponent<LocalToWorld>(_skirtPrototype);
+        mgr.AddComponent<TerrainSkirt>(_skirtPrototype);
+        mgr.AddComponent<TerrainDeferredVisible>(_skirtPrototype);
+        mgr.AddComponent<TerrainSkirtLinkedParent>(_skirtPrototype);
+        mgr.AddComponent<Prefab>(_skirtPrototype);
+        mgr.SetComponentEnabled<TerrainDeferredVisible>(_skirtPrototype, false);
+
+        _prototypesCreated = true;
     }
 
     [BurstCompile]
@@ -189,7 +190,7 @@ public partial struct ChunkManagerSystem : ISystem
     {
         var job = new UpdateNeighbourMasksJob
         {
-            ChunkMap = _ChunkMap.AsReadOnly()
+            ChunkMap = _chunkMap.AsReadOnly()
         };
         state.Dependency = job.ScheduleParallel(state.Dependency);
     }
@@ -225,7 +226,7 @@ public partial struct ChunkManagerSystem : ISystem
         {
             if (!inputMask.IsSet(i))
             {
-                int3 offset = (int3)VoxelUtils.IndexToPos(i, 3);
+                uint3 offset = VoxelUtils.IndexToPos(i, 3);
                 byte backing = 0;
                 BitUtils.SetBit(ref backing, 0, offset.x == 0);
                 BitUtils.SetBit(ref backing, 1, offset.y == 0);

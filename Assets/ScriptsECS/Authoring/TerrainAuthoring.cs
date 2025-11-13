@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 
+// 这是场景中唯一的配置入口，类似原框架的 Voxel Terrain GameObject
 public class TerrainAuthoring : MonoBehaviour
 {
     public int3 ChunkSize = new int3(32, 32, 32);
@@ -17,11 +18,11 @@ public class TerrainAuthoring : MonoBehaviour
         {
             var entity = GetEntity(TransformUsageFlags.None);
 
-            // 1. 烘焙地形配置到ECS单例组件
+            // 1. 烘焙地形核心配置，所有系统都将读取这个单例
             AddComponent(entity, new TerrainConfig
             {
                 ChunkSize = authoring.ChunkSize,
-                PaddedChunkSize = authoring.ChunkSize + 2, // 直接在这里计算
+                PaddedChunkSize = authoring.ChunkSize + 2, // 直接在这里计算Padding后的大小
                 ChunkSpawnSize = authoring.ChunkSpawnSize,
             });
 
@@ -31,37 +32,12 @@ public class TerrainAuthoring : MonoBehaviour
                 MeshJobsPerTick = authoring.MeshJobsPerTick
             });
 
-            // 3. 烘焙托管资源（材质、ComputeShader）
+            // 3. 烘焙托管资源（材质、ComputeShader），这些不能放在struct中
             AddComponentObject(entity, new TerrainResources
             {
                 ChunkMaterial = authoring.ChunkMaterial,
                 VoxelComputeShader = authoring.VoxelComputeShader
             });
-
-            // 4. 为ManagedTerrain单例关联烘焙好的资源
-            // 注意：这是一种在ECS中与MonoBehaviour交互的模式
-            var managedTerrain = FindObjectOfType<ManagedTerrain>();
-            if (managedTerrain != null)
-            {
-                managedTerrain.SetResources(new TerrainResources
-                {
-                    ChunkMaterial = authoring.ChunkMaterial,
-                    VoxelComputeShader = authoring.VoxelComputeShader
-                });
-            }
         }
     }
-}
-
-// 将组件定义移到单独的文件中会更清晰，但为了遵循你的结构，暂时放在这里
-// 这些是被烘焙进ECS世界的数据
-public class TerrainResources : IComponentData
-{
-    public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader;
-}
-
-public struct TerrainMesherConfig : IComponentData
-{
-    public int MeshJobsPerTick;
 }

@@ -3,7 +3,7 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     internal struct ApplyMeshHandler : ISubHandler
     {

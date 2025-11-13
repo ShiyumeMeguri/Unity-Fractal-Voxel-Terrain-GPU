@@ -3,7 +3,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     [BurstCompile]
     public struct NormalsCalculateJob : IJobParallelFor

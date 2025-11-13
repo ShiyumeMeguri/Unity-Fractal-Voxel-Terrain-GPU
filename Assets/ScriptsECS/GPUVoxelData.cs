@@ -3,7 +3,7 @@ using UnityEngine;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Collections.LowLevel.Unsafe;
-using OptIn.Voxel;
+using Ruri.Voxel;
 using UnityEngine.Rendering; // 添加 using
 
 public class GPUVoxelData : System.IDisposable

@@ -6,7 +6,7 @@ using Unity.Mathematics; // 引入 math
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     public class MeshJobHandler
     {

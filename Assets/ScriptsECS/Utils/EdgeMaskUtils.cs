@@ -1,5 +1,5 @@
 // Assets/ScriptsECS/Meshing/Utils/EdgeMaskUtils.cs
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     public static class EdgeMaskUtils
     {

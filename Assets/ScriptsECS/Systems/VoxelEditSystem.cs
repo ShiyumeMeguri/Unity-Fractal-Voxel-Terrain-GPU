@@ -1,4 +1,4 @@
-using OptIn.Voxel;
+using Ruri.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;

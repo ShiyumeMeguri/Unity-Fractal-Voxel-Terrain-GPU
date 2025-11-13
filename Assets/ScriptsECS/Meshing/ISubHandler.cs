@@ -1,6 +1,6 @@
-using OptIn.Voxel;
+using Ruri.Voxel;
 
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     public interface ISubHandler
     {

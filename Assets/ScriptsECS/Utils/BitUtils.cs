@@ -2,7 +2,7 @@
 using System.Runtime.CompilerServices;
 using Unity.Mathematics;
 
-namespace OptIn.Voxel
+namespace Ruri.Voxel
 {
     public static class BitUtils
     {

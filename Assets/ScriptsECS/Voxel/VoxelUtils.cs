@@ -1,7 +1,7 @@
 // Assets/ScriptsECS/Voxel/VoxelUtils.cs
 using Unity.Mathematics;
 
-namespace OptIn.Voxel
+namespace Ruri.Voxel
 {
     public static class VoxelUtils
     {

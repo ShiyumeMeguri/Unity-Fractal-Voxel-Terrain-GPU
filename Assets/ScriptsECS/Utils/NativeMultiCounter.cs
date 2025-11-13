@@ -5,7 +5,7 @@ using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 
-namespace OptIn.Voxel
+namespace Ruri.Voxel
 {
     [StructLayout(LayoutKind.Sequential)]
     [NativeContainer]

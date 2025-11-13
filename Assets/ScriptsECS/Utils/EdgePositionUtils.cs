@@ -1,7 +1,7 @@
 // Utils/EdgePositionUtils.cs
 using Unity.Mathematics;
 
-namespace OptIn.Voxel
+namespace Ruri.Voxel
 {
     public static class EdgePositionUtils
     {

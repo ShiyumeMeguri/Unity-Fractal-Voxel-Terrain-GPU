@@ -4,7 +4,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace OptIn.Voxel.Meshing
+namespace Ruri.Voxel
 {
     public struct Vertices
     {

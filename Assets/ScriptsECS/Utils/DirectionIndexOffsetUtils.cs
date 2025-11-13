@@ -1,5 +1,5 @@
 using Unity.Mathematics;
-using OptIn.Voxel;
+using Ruri.Voxel;
 
 public static class DirectionIndexOffsetUtils
 {

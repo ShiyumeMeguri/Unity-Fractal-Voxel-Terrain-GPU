@@ -5,120 +5,123 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Physics;
 
-[UpdateInGroup(typeof(SimulationSystemGroup))]
-[UpdateAfter(typeof(TerrainMeshingSystem))]
-[BurstCompile]
-public partial struct TerrainColliderSystem : ISystem
+namespace Ruri.Voxel
 {
-    private NativeList<PendingBakeRequest> _PendingRequests;
-
-    private struct PendingBakeRequest
-    {
-        public JobHandle Dependency;
-        public Entity Entity;
-        public NativeReference<BlobAssetReference<Collider>> ColliderRef;
-
-        public void Dispose()
-        {
-            Dependency.Complete();
-            if (ColliderRef.IsCreated && ColliderRef.Value.IsCreated) ColliderRef.Value.Dispose();
-            if (ColliderRef.IsCreated) ColliderRef.Dispose();
-        }
-    }
-
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(TerrainMeshingSystem))]
     [BurstCompile]
-    public void OnCreate(ref SystemState state)
+    public partial struct TerrainColliderSystem : ISystem
     {
-        _PendingRequests = new NativeList<PendingBakeRequest>(Allocator.Persistent);
-    }
+        private NativeList<PendingBakeRequest> _PendingRequests;
 
-    [BurstCompile]
-    public void OnDestroy(ref SystemState state)
-    {
-        state.Dependency.Complete();
-        foreach (var request in _PendingRequests)
+        private struct PendingBakeRequest
         {
-            request.Dispose();
-        }
-        _PendingRequests.Dispose();
-    }
+            public JobHandle Dependency;
+            public Entity Entity;
+            public NativeReference<BlobAssetReference<Collider>> ColliderRef;
 
-    [BurstCompile]
-    public void OnUpdate(ref SystemState state)
-    {
-        for (int i = _PendingRequests.Length - 1; i >= 0; i--)
-        {
-            var request = _PendingRequests[i];
-            if (request.Dependency.IsCompleted)
+            public void Dispose()
             {
-                request.Dependency.Complete();
-                if (SystemAPI.Exists(request.Entity))
+                Dependency.Complete();
+                if (ColliderRef.IsCreated && ColliderRef.Value.IsCreated) ColliderRef.Value.Dispose();
+                if (ColliderRef.IsCreated) ColliderRef.Dispose();
+            }
+        }
+
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
+        {
+            _PendingRequests = new NativeList<PendingBakeRequest>(Allocator.Persistent);
+        }
+
+        [BurstCompile]
+        public void OnDestroy(ref SystemState state)
+        {
+            state.Dependency.Complete();
+            foreach (var request in _PendingRequests)
+            {
+                request.Dispose();
+            }
+            _PendingRequests.Dispose();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            for (int i = _PendingRequests.Length - 1; i >= 0; i--)
+            {
+                var request = _PendingRequests[i];
+                if (request.Dependency.IsCompleted)
                 {
-                    if (SystemAPI.HasComponent<PhysicsCollider>(request.Entity))
+                    request.Dependency.Complete();
+                    if (SystemAPI.Exists(request.Entity))
                     {
-                        var oldCollider = SystemAPI.GetComponent<PhysicsCollider>(request.Entity);
-                        if (oldCollider.Value.IsCreated) oldCollider.Value.Dispose();
+                        if (SystemAPI.HasComponent<PhysicsCollider>(request.Entity))
+                        {
+                            var oldCollider = SystemAPI.GetComponent<PhysicsCollider>(request.Entity);
+                            if (oldCollider.Value.IsCreated) oldCollider.Value.Dispose();
+                        }
+                        else
+                        {
+                            state.EntityManager.AddComponent<PhysicsCollider>(request.Entity);
+                        }
+
+                        SystemAPI.SetComponent(request.Entity, new PhysicsCollider { Value = request.ColliderRef.Value });
                     }
                     else
                     {
-                        state.EntityManager.AddComponent<PhysicsCollider>(request.Entity);
+                        if (request.ColliderRef.Value.IsCreated) request.ColliderRef.Value.Dispose();
                     }
 
-                    SystemAPI.SetComponent(request.Entity, new PhysicsCollider { Value = request.ColliderRef.Value });
+                    request.ColliderRef.Dispose();
+                    _PendingRequests.RemoveAtSwapBack(i);
                 }
-                else
+            }
+
+            foreach (var (meshData, entity) in SystemAPI.Query<RefRO<TerrainChunkMesh>>().WithAll<TerrainChunkRequestCollisionTag>().WithEntityAccess())
+            {
+                if (!meshData.ValueRO.Vertices.IsCreated || meshData.ValueRO.Vertices.Length == 0)
                 {
-                    if (request.ColliderRef.Value.IsCreated) request.ColliderRef.Value.Dispose();
+                    SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, false);
+                    continue;
                 }
 
-                request.ColliderRef.Dispose();
-                _PendingRequests.RemoveAtSwapBack(i);
-            }
-        }
+                var colliderRef = new NativeReference<BlobAssetReference<Collider>>(Allocator.Persistent);
+                var bakeJob = new BakingJob
+                {
+                    Vertices = meshData.ValueRO.Vertices,
+                    Indices = meshData.ValueRO.MainMeshIndices,
+                    Collider = colliderRef
+                };
 
-        foreach (var (meshData, entity) in SystemAPI.Query<RefRO<TerrainChunkMesh>>().WithAll<TerrainChunkRequestCollisionTag>().WithEntityAccess())
-        {
-            if (!meshData.ValueRO.Vertices.IsCreated || meshData.ValueRO.Vertices.Length == 0)
-            {
+                var handle = bakeJob.Schedule(meshData.ValueRO.AccessJobHandle);
+
+                _PendingRequests.Add(new PendingBakeRequest
+                {
+                    Dependency = handle,
+                    Entity = entity,
+                    ColliderRef = colliderRef
+                });
+
                 SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, false);
-                continue;
             }
-
-            var colliderRef = new NativeReference<BlobAssetReference<Collider>>(Allocator.Persistent);
-            var bakeJob = new BakingJob
-            {
-                Vertices = meshData.ValueRO.Vertices,
-                Indices = meshData.ValueRO.MainMeshIndices,
-                Collider = colliderRef
-            };
-
-            var handle = bakeJob.Schedule(meshData.ValueRO.AccessJobHandle);
-
-            _PendingRequests.Add(new PendingBakeRequest
-            {
-                Dependency = handle,
-                Entity = entity,
-                ColliderRef = colliderRef
-            });
-
-            SystemAPI.SetComponentEnabled<TerrainChunkRequestCollisionTag>(entity, false);
         }
-    }
 
-    [BurstCompile]
-    private struct BakingJob : IJob
-    {
-        [ReadOnly] public NativeArray<float3> Vertices;
-        [ReadOnly] public NativeArray<int> Indices;
-        public NativeReference<BlobAssetReference<Collider>> Collider;
-
-        public void Execute()
+        [BurstCompile]
+        private struct BakingJob : IJob
         {
-            if (Vertices.Length == 0 || Indices.Length == 0) return;
+            [ReadOnly] public NativeArray<float3> Vertices;
+            [ReadOnly] public NativeArray<int> Indices;
+            public NativeReference<BlobAssetReference<Collider>> Collider;
 
-            var triangles = Indices.Reinterpret<int3>(sizeof(int));
-            var material = Material.Default;
-            Collider.Value = Unity.Physics.MeshCollider.Create(Vertices, triangles, CollisionFilter.Default, material);
+            public void Execute()
+            {
+                if (Vertices.Length == 0 || Indices.Length == 0) return;
+
+                var triangles = Indices.Reinterpret<int3>(sizeof(int));
+                var material = Material.Default;
+                Collider.Value = Unity.Physics.MeshCollider.Create(Vertices, triangles, CollisionFilter.Default, material);
+            }
         }
     }
 }

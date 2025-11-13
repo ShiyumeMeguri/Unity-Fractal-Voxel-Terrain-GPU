@@ -7,7 +7,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Aether
+namespace Ruri.Voxel
 {
 	public static class Utility
 	{
