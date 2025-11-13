@@ -77,13 +77,7 @@ namespace OptIn.Voxel.Meshing
         [ReadOnly] public NativeCounter VertexCounter;
         [ReadOnly] public NativeCounter TriangleCounter;
 
-        [ReadOnly] public Vertices SkirtVertices;
-        [ReadOnly] public NativeCounter SkirtVertexCounter;
-
-        [ReadOnly] public NativeArray<int> SkirtStitchedIndices;
-        [ReadOnly] public NativeCounter SkirtStitchedTriangleCounter;
-        [ReadOnly] public NativeArray<int> SkirtForcedPerFaceIndices;
-        [ReadOnly] public NativeMultiCounter SkirtForcedTriangleCounter;
+        // REFACTOR: All skirt-related fields are removed.
 
         public NativeArray<int> SubmeshIndexOffsets;
         public NativeArray<int> SubmeshIndexCounts;
@@ -111,43 +105,25 @@ namespace OptIn.Voxel.Meshing
         public void Execute()
         {
             int mainVertexCount = VertexCounter.Count;
-            int skirtVertexCount = SkirtVertexCounter.Count;
-            TotalVertexCount.Value = mainVertexCount + skirtVertexCount;
+            TotalVertexCount.Value = mainVertexCount;
 
             CopyVertices(Vertices, MergedVertices, 0, mainVertexCount);
-            CopyVertices(SkirtVertices, MergedVertices, mainVertexCount, skirtVertexCount);
 
             int mainIndexCount = TriangleCounter.Count * 3;
-            int skirtStitchedIndexCount = SkirtStitchedTriangleCounter.Count * 3;
+            TotalIndexCount.Value = mainIndexCount;
 
             CopyIndices(Indices, MergedIndices, 0, mainIndexCount);
-            CopyIndices(SkirtStitchedIndices, MergedIndices, mainIndexCount, skirtStitchedIndexCount);
 
+            // Main mesh is submesh 0
             SubmeshIndexOffsets[0] = 0;
-            SubmeshIndexCounts[0] = mainIndexCount + skirtStitchedIndexCount;
+            SubmeshIndexCounts[0] = mainIndexCount;
 
-            int currentIndexOffset = mainIndexCount + skirtStitchedIndexCount;
-            int totalIndexCount = currentIndexOffset;
-
-            var forcedCounts = SkirtForcedTriangleCounter.ToArray();
-            for (int face = 0; face < 6; face++)
+            // Other submeshes (for skirts) are now empty.
+            for (int i = 1; i < 7; i++)
             {
-                int perFaceIndexCount = forcedCounts[face] * 3;
-                int perFaceMaxIndices = VoxelUtils.SKIRT_FACE * 6;
-
-                if (perFaceIndexCount > 0)
-                {
-                    CopyIndices(SkirtForcedPerFaceIndices.GetSubArray(face * perFaceMaxIndices, perFaceIndexCount), MergedIndices, currentIndexOffset, perFaceIndexCount);
-                }
-
-                SubmeshIndexOffsets[face + 1] = currentIndexOffset;
-                SubmeshIndexCounts[face + 1] = perFaceIndexCount;
-
-                currentIndexOffset += perFaceIndexCount;
-                totalIndexCount += perFaceIndexCount;
+                SubmeshIndexOffsets[i] = 0;
+                SubmeshIndexCounts[i] = 0;
             }
-
-            TotalIndexCount.Value = totalIndexCount;
         }
     }
 }

@@ -1,6 +1,8 @@
+// Assets/ScriptsECS/Meshing/Handlers/MeshJobHandler.cs
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
+using Unity.Mathematics; // 引入 math
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -14,13 +16,11 @@ namespace OptIn.Voxel.Meshing
             public Bounds Bounds;
             public int VertexCount;
             public int MainMeshIndexCount;
-            public int[] ForcedSkirtFacesTriCount;
             public Vertices Vertices;
             public NativeArray<int> MainMeshIndices;
         }
 
         private CoreMeshHandler _Core;
-        private SkirtHandler _Skirt;
         private MergeMeshHandler _Merger;
         private ApplyMeshHandler _Apply;
         private NormalsHandler _Normals;
@@ -31,13 +31,11 @@ namespace OptIn.Voxel.Meshing
         public MeshJobHandler(TerrainConfig config)
         {
             _Core = new CoreMeshHandler();
-            _Skirt = new SkirtHandler();
             _Merger = new MergeMeshHandler();
             _Apply = new ApplyMeshHandler();
             _Normals = new NormalsHandler();
 
             _Core.Init(config);
-            _Skirt.Init(config);
             _Merger.Init(config);
             _Apply.Init(config);
             _Normals.Init(config);
@@ -55,15 +53,18 @@ namespace OptIn.Voxel.Meshing
             _Entity = entity;
             chunkVoxels.MeshingInProgress = true;
 
-            // [修复] 将4参数的CombineDependencies拆分为链式调用
-            var handle1 = JobHandle.CombineDependencies(dependency, chunkVoxels.AsyncReadJobHandle);
-            var handle2 = JobHandle.CombineDependencies(chunkVoxels.AsyncWriteJobHandle, _JobHandle);
-            var currentHandle = JobHandle.CombineDependencies(handle1, handle2);
+            // CORRECTED: Use a NativeArray to combine multiple JobHandles.
+            var deps = new NativeArray<JobHandle>(4, Allocator.Temp);
+            deps[0] = dependency;
+            deps[1] = chunkVoxels.AsyncReadJobHandle;
+            deps[2] = chunkVoxels.AsyncWriteJobHandle;
+            deps[3] = _JobHandle;
+            var currentHandle = JobHandle.CombineDependencies(deps);
+            deps.Dispose(); // Always dispose temporary native containers.
 
             _Normals.Schedule(ref chunkVoxels, currentHandle);
             _Core.Schedule(ref chunkVoxels, ref _Normals, _Normals.JobHandle);
-            _Skirt.Schedule(ref chunkVoxels, ref _Core, ref _Normals, _Core.JobHandle);
-            _Merger.Schedule(ref _Core, ref _Skirt);
+            _Merger.Schedule(ref _Core);
             _Apply.Schedule(ref _Merger);
 
             _JobHandle = _Apply.JobHandle;
@@ -96,8 +97,7 @@ namespace OptIn.Voxel.Meshing
             {
                 Bounds = new Bounds { min = _Apply.Bounds.Value.Min, max = _Apply.Bounds.Value.Max },
                 VertexCount = _Merger.TotalVertexCount.Value,
-                MainMeshIndexCount = _Merger.SubmeshIndexCounts[0],
-                ForcedSkirtFacesTriCount = _Skirt.ForcedTriangleCounter.ToArray(),
+                MainMeshIndexCount = _Merger.TotalIndexCount.Value,
                 IsEmpty = isEmpty,
                 Vertices = _Merger.MergedVertices,
                 MainMeshIndices = _Merger.MergedIndices,
@@ -105,7 +105,8 @@ namespace OptIn.Voxel.Meshing
 
             if (isEmpty)
             {
-                // [修复] 移除对 .IsCreated 的不正确检查
+                // CORRECTED: Removed the invalid .IsCreated check. 
+                // The MeshDataArray is always allocated in Schedule, so we must always dispose it.
                 _Apply.MeshDataArray.Dispose();
             }
             else
@@ -121,7 +122,6 @@ namespace OptIn.Voxel.Meshing
         {
             _JobHandle.Complete();
             _Core.Dispose();
-            _Skirt.Dispose();
             _Merger.Dispose();
             _Apply.Dispose();
             _Normals.Dispose();
