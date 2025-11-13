@@ -1,6 +1,8 @@
 using Unity.Entities;
 
-namespace jedjoud.VoxelTerrain {
-    public struct TerrainManagerConfig : IComponentData {
+namespace Ruri.Voxel
+{
+    public struct TerrainManagerConfig : IComponentData
+    {
     }
 }
