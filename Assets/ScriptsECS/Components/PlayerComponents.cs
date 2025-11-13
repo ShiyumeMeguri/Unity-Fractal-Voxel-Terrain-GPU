@@ -1,13 +1,15 @@
 // Components/PlayerComponents.cs
 using Unity.Entities;
 using Unity.Mathematics;
+using Ruri.Voxel; // [新增] 统一命名空间
 
-// 用于识别玩家/加载器实体
-public struct PlayerTag : IComponentData { }
-
-// 用于驱动地形生成的加载器，包含其位置信息
-public struct TerrainLoader : IComponentData
+namespace Ruri.Voxel
 {
-    public float3 Position;
-    public int3 LastChunkPosition;
+    public struct PlayerTag : IComponentData { }
+
+    public struct TerrainLoader : IComponentData
+    {
+        public float3 Position;
+        public int3 LastChunkPosition;
+    }
 }

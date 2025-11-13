@@ -1,15 +1,18 @@
 using Unity.Entities;
 using UnityEngine;
 
-[RequireComponent(typeof(PlayerController))]
-public class PlayerAuthoring : MonoBehaviour
+namespace Ruri.Voxel
 {
-    class Baker : Baker<PlayerAuthoring>
+    [RequireComponent(typeof(PlayerController))]
+    public class PlayerAuthoring : MonoBehaviour
     {
-        public override void Bake(PlayerAuthoring authoring)
+        class Baker : Baker<PlayerAuthoring>
         {
-            var entity = GetEntity(TransformUsageFlags.Dynamic);
-            AddComponent<PlayerTag>(entity);
+            public override void Bake(PlayerAuthoring authoring)
+            {
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+                AddComponent<PlayerTag>(entity);
+            }
         }
     }
 }

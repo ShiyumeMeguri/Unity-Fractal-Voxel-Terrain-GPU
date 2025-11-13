@@ -2,34 +2,36 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Ruri.Voxel; // [新增] 统一命名空间
 
-// 地形全局配置单例组件
-public struct TerrainConfig : IComponentData
+namespace Ruri.Voxel
 {
-    public int3 ChunkSize;
-    public int3 PaddedChunkSize;
-    public int2 ChunkSpawnSize;
-}
+    public struct TerrainConfig : IComponentData
+    {
+        public int3 ChunkSize;
+        public int3 PaddedChunkSize;
+        public int2 ChunkSpawnSize;
+    }
 
-// 托管资源单例组件
-public class TerrainResources : IComponentData
-{
-    public Material ChunkMaterial;
-    public ComputeShader VoxelComputeShader;
-}
+    public class TerrainResources : IComponentData
+    {
+        public Material ChunkMaterial;
+        public ComputeShader VoxelComputeShader;
+    }
 
-// 网格生成器配置单例组件
-public struct TerrainMesherConfig : IComponentData
-{
-    public int MeshJobsPerTick;
-}
+    public struct TerrainMesherConfig : IComponentData
+    {
+        public int MeshJobsPerTick;
+    }
 
-// 用于向特定区块应用体素编辑的请求组件
-public struct VoxelEditRequest : IComponentData
-{
-    public enum EditType { SetBlock }
+    public struct VoxelEditRequest : IComponentData
+    {
+        public enum EditType { SetBlock, ModifySphere } // [修正] 遵循OOP中的ModifySphere功能
 
-    public EditType Type;
-    public float3 WorldPosition;
-    public short VoxelID;
+        public EditType Type;
+        public float3 WorldPosition;
+        public float Radius; // 用于球体编辑
+        public float Intensity; // 用于球体编辑
+        public short VoxelID; // 对于SetBlock是方块ID，对于ModifySphere是材质ID
+    }
 }

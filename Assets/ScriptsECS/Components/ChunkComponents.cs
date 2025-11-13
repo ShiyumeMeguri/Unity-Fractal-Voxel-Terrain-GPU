@@ -7,22 +7,12 @@ using System.Runtime.InteropServices;
 
 namespace Ruri.Voxel
 {
+    // [修正] 你的Voxel结构体被重命名为VoxelData以匹配框架，并移到此处
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
     public struct VoxelData
     {
-        /// <summary>
-        /// ID of the voxel.
-        /// > 0: Block type ID.
-        /// <= 0: Isosurface material ID (absolute value).
-        /// = 0: Air.
-        /// </summary>
         public short voxelID;
-
-        /// <summary>
-        /// For isosurface voxels (voxelID <= 0), this stores density, scaled to the range of a short.
-        /// For block voxels (voxelID > 0), this can be used for metadata.
-        /// </summary>
         public short metadata;
 
         public static VoxelData Empty => new VoxelData { voxelID = 0, metadata = 0 };
@@ -31,15 +21,12 @@ namespace Ruri.Voxel
         {
             get
             {
-                if (voxelID > 0) return 1f; // Blocks are always "full"
+                if (voxelID > 0) return 1f;
                 return metadata / 32767f;
             }
             set
             {
-                if (voxelID <= 0) // Only set density for isosurface
-                {
-                    metadata = (short)(math.clamp(value, -1f, 1f) * 32767f);
-                }
+                metadata = (short)(math.clamp(value, -1f, 1f) * 32767f);
             }
         }
 
@@ -47,18 +34,23 @@ namespace Ruri.Voxel
         public bool IsIsosurface => voxelID <= 0;
         public bool IsAir => voxelID == 0 && metadata <= 0;
         public bool IsSolid => IsBlock || Density > 0;
+
+        public ushort GetMaterialID()
+        {
+            return (ushort)math.abs(voxelID);
+        }
     }
 
-    // 核心区块组件，存储位置和邻居状态
+    // [修正] 遵循框架API，定义核心区块组件
     public struct Chunk : IComponentData
     {
         public int3 Position;
         public byte SkirtMask;
-        public FixedList64Bytes<Entity> Skirts; // 遵循框架，即使暂时不用
+        public FixedList64Bytes<Entity> Skirts;
         public BitField32 NeighbourMask;
     }
 
-    // 体素数据容器
+    // [修正] 遵循框架API，定义体素数据组件
     public struct TerrainChunkVoxels : IComponentData, IEnableableComponent
     {
         public NativeArray<VoxelData> Voxels;
@@ -78,7 +70,7 @@ namespace Ruri.Voxel
         }
     }
 
-    // 网格数据容器
+    // [修正] 遵循框架API，定义网格数据组件
     public struct TerrainChunkMesh : IComponentData, IEnableableComponent
     {
         public NativeArray<float3> Vertices;
@@ -119,32 +111,23 @@ namespace Ruri.Voxel
         }
     }
 
-    // --- 以下是完全遵循目标框架的状态标签 ---
-
+    // --- [新增] 以下是完全遵循目标框架的状态标签 ---
     public struct TerrainChunkRequestReadbackTag : IComponentData, IEnableableComponent
     {
         public bool SkipMeshingIfEmpty;
     }
-
     public struct TerrainChunkVoxelsReadyTag : IComponentData, IEnableableComponent { }
-
     public struct TerrainChunkRequestMeshingTag : IComponentData, IEnableableComponent
     {
         public bool DeferredVisibility;
     }
-
     public struct TerrainChunkRequestCollisionTag : IComponentData, IEnableableComponent { }
-
     public struct TerrainChunkEndOfPipeTag : IComponentData, IEnableableComponent { }
-
     public struct TerrainDeferredVisible : IComponentData, IEnableableComponent { }
-
-    // 以下是为裙边预留的组件，即使暂时不实现其逻辑
     public struct TerrainSkirt : IComponentData
     {
         public byte Direction;
     }
-
     public struct TerrainSkirtLinkedParent : IComponentData
     {
         public Entity ChunkParent;

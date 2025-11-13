@@ -2,24 +2,28 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Ruri.Voxel; // [新增] 统一命名空间
 
-public class TerrainLoaderAuthoring : MonoBehaviour
+namespace Ruri.Voxel
 {
-    class Baker : Baker<TerrainLoaderAuthoring>
+    public class TerrainLoaderAuthoring : MonoBehaviour
     {
-        public override void Bake(TerrainLoaderAuthoring authoring)
+        class Baker : Baker<TerrainLoaderAuthoring>
         {
-            var entity = GetEntity(TransformUsageFlags.Dynamic);
-            
-            // 添加TerrainLoader组件，ChunkManagerSystem将查询这个组件来确定区块生成中心
-            AddComponent(entity, new TerrainLoader 
+            public override void Bake(TerrainLoaderAuthoring authoring)
             {
-                Position = float3.zero, // 将由System在运行时更新
-                LastChunkPosition = new int3(int.MinValue)
-            });
-            
-            // 保留PlayerTag以便其他系统（如输入）可以识别玩家
-            AddComponent<PlayerTag>(entity);
+                var entity = GetEntity(TransformUsageFlags.Dynamic);
+
+                // 添加TerrainLoader组件，ChunkManagerSystem将查询这个组件来确定区块生成中心
+                AddComponent(entity, new TerrainLoader
+                {
+                    Position = float3.zero, // 将由System在运行时更新
+                    LastChunkPosition = new int3(int.MinValue)
+                });
+
+                // 保留PlayerTag以便其他系统（如输入）可以识别玩家
+                AddComponent<PlayerTag>(entity);
+            }
         }
     }
 }
