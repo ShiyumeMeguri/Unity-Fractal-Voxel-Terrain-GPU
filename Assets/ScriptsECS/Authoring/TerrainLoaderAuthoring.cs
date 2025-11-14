@@ -13,14 +13,12 @@ namespace Ruri.Voxel
             {
                 var entity = GetEntity(TransformUsageFlags.Dynamic);
 
-                // 添加TerrainLoader组件，ChunkManagerSystem将查询这个组件来确定区块生成中心
                 AddComponent(entity, new TerrainLoader
                 {
-                    Position = float3.zero, // 将由System在运行时更新
-                    LastChunkPosition = new int3(int.MinValue)
+                    Position = float3.zero,
+                    LastChunkPosition = new int3(int.MinValue) // 初始化为一个不可能的值
                 });
 
-                // 保留PlayerTag以便其他系统（如输入）可以识别玩家
                 AddComponent<PlayerTag>(entity);
             }
         }
