@@ -78,7 +78,6 @@ public partial class TerrainReadbackSystem : SystemBase
         _multiSignCountersBuffer = new ComputeBuffer(BATCH_SIZE, sizeof(int));
         _transformsBuffer = new ComputeBuffer(BATCH_SIZE, UnsafeUtility.SizeOf<MultiReadbackTransform>());
 
-        Debug.Log("[TerrainReadbackSystem] OnCreate: System created and buffers allocated.");
     }
 
     protected override void OnDestroy()
@@ -93,7 +92,6 @@ public partial class TerrainReadbackSystem : SystemBase
         _voxelBuffer?.Release();
         _multiSignCountersBuffer?.Release();
         _transformsBuffer?.Release();
-        Debug.Log("[TerrainReadbackSystem] OnDestroy: System destroyed and resources released.");
     }
 
     protected override void OnUpdate()
@@ -123,7 +121,6 @@ public partial class TerrainReadbackSystem : SystemBase
         var resources = SystemAPI.ManagedAPI.GetSingleton<TerrainResources>();
         if (resources.VoxelComputeShader == null)
         {
-            Debug.LogError("[TerrainReadbackSystem] VoxelComputeShader is not assigned in TerrainAuthoring.");
             return;
         }
 
@@ -131,7 +128,6 @@ public partial class TerrainReadbackSystem : SystemBase
         int numToProcess = math.min(BATCH_SIZE, entities.Length);
         if (numToProcess == 0) return;
 
-        Debug.Log($"[TerrainReadbackSystem] Starting new readback batch for {numToProcess} chunks.");
         _free = false;
         _voxelsFetched = false;
         _countersFetched = false;
@@ -197,7 +193,6 @@ public partial class TerrainReadbackSystem : SystemBase
 
         if (request.hasError)
         {
-            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error for voxel data!");
             ResetState();
             return;
         }
@@ -243,7 +238,6 @@ public partial class TerrainReadbackSystem : SystemBase
         if (_disposed) return;
         if (request.hasError)
         {
-            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error for sign counters!");
             ResetState();
             return;
         }
@@ -254,7 +248,6 @@ public partial class TerrainReadbackSystem : SystemBase
 
     private void FinalizeBatch()
     {
-        Debug.Log($"[TerrainReadbackSystem] Finalizing batch of {_batchEntities.Count} chunks.");
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 

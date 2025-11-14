@@ -5,7 +5,6 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using UnityEngine; // For Debug.Log
 
 [UpdateInGroup(typeof(SimulationSystemGroup), OrderFirst = true)]
 [BurstCompile]
@@ -22,7 +21,6 @@ public partial struct ChunkManagerSystem : ISystem
         _chunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
 
         state.EntityManager.CreateSingleton<TerrainReadySystems>();
-        Debug.Log("[ChunkManagerSystem] OnCreate: System created.");
     }
 
     [BurstCompile]
@@ -44,17 +42,13 @@ public partial struct ChunkManagerSystem : ISystem
 
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
 
-        // [关键检查] 确保所有单例都已就绪
         if (!SystemAPI.TryGetSingleton<TerrainConfig>(out var config))
         {
-            // 如果连最基本的配置都没有，直接返回，避免后续错误
-            if (Time.frameCount % 120 == 0) Debug.LogError("[ChunkManagerSystem] OnUpdate skipped: TerrainConfig singleton not found. Did you forget to add TerrainAuthoring to the scene?");
             readySystems.manager = false;
             return;
         }
         if (!SystemAPI.TryGetSingletonEntity<TerrainLoader>(out var loaderEntity))
         {
-            if (Time.frameCount % 120 == 0) Debug.LogError("[ChunkManagerSystem] OnUpdate skipped: TerrainLoader entity not found. Did you forget to add TerrainLoaderAuthoring to your player/camera?");
             readySystems.manager = false;
             return;
         }
@@ -72,7 +66,6 @@ public partial struct ChunkManagerSystem : ISystem
             return;
         }
 
-        Debug.Log($"[ChunkManagerSystem] Player moved to new chunk: {playerChunkPos}. Last was: {loader.LastChunkPosition}. Updating chunks.");
         loader.LastChunkPosition = playerChunkPos;
 
         var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -100,7 +93,6 @@ public partial struct ChunkManagerSystem : ISystem
         {
             _chunkMap.Remove(key);
         }
-        if (destroyCount > 0) Debug.Log($"[ChunkManagerSystem] Destroying {destroyCount} chunks.");
 
         int createCount = 0;
         foreach (var pos in requiredChunks)
@@ -114,7 +106,6 @@ public partial struct ChunkManagerSystem : ISystem
                 createCount++;
             }
         }
-        if (createCount > 0) Debug.Log($"[ChunkManagerSystem] Creating {createCount} new chunks.");
 
         readySystems.manager = (createCount == 0 && destroyCount == 0);
 
@@ -152,6 +143,5 @@ public partial struct ChunkManagerSystem : ISystem
         mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(_chunkPrototype, true); // 新区块默认请求数据回读
 
         _prototypesCreated = true;
-        Debug.Log("[ChunkManagerSystem] Chunk prototype created.");
     }
 }
