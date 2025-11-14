@@ -10,7 +10,7 @@ RWStructuredBuffer<Voxel> asyncVoxelBuffer;
 
 int3 chunkPosition;
 uint3 chunkSize;
-uint baseIndex;
+uint baseIndex; // [新增] 用于批处理的偏移量
 
 float4 _QuaternionJuliaC;
 float _QuaternionJuliaPosW;
@@ -20,7 +20,7 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     float minDistance = 99999;
     float3 kleinianPos;
     // [修复] 初始化 mandelbrotPos
-    float4 mandelbrotPos = float4(0, 0, 0, 0); 
+    float4 mandelbrotPos = float4(0, 0, 0, 0);
     minDistance = min(minDistance, KleinianDE(fractalPos * sqrt(length(mandelbrotPos.xy)), minFractalPos, maxFractalPos, kleinianPos));
     return minDistance;
 }
@@ -56,5 +56,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         metadata = (int) (density * 32767.0);
     }
     
+    // [修正] 使用 baseIndex 作为批处理偏移量
     asyncVoxelBuffer[baseIndex + index].packedData = ((uint) metadata << 16) | ((uint) voxelID & 0x0000FFFF);
 }
