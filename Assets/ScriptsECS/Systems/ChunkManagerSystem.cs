@@ -12,7 +12,7 @@ public partial struct ChunkManagerSystem : ISystem
 {
     private int3 _lastPlayerChunkPos;
     private Entity _chunkPrototype;
-    private Entity _skirtPrototype;
+    // [移除] _skirtPrototype 已被移除
     private NativeHashMap<int3, Entity> _chunkMap;
     private bool _prototypesCreated;
 
@@ -60,7 +60,6 @@ public partial struct ChunkManagerSystem : ISystem
         if (!SystemAPI.TryGetSingletonEntity<TerrainLoader>(out var loaderEntity)) return;
         var loaderPos = SystemAPI.GetComponent<LocalToWorld>(loaderEntity).Position;
 
-        // 更新Loader组件
         var loader = SystemAPI.GetComponentRW<TerrainLoader>(loaderEntity);
         loader.ValueRW.Position = loaderPos;
 
@@ -79,12 +78,12 @@ public partial struct ChunkManagerSystem : ISystem
         var requiredChunks = new NativeHashSet<int3>(1024, Allocator.Temp);
         var spawnSize = config.ChunkSpawnSize;
 
-        // Y轴不生成，保持和你OOP逻辑一致
         for (int x = -spawnSize.x; x <= spawnSize.x; x++)
         {
             for (int z = -spawnSize.x; z <= spawnSize.x; z++)
             {
-                requiredChunks.Add(playerChunkPos + new int3(x, 0, z)); // 假设Y轴固定在0
+                // [修正] 你的OOP版本只在XZ平面上生成，这里保持一致
+                requiredChunks.Add(playerChunkPos + new int3(x, 0, z));
             }
         }
 
@@ -122,23 +121,15 @@ public partial struct ChunkManagerSystem : ISystem
 
             Entity newChunk = ecb.Instantiate(_chunkPrototype);
 
-            var skirts = new FixedList64Bytes<Entity>();
-            for (byte i = 0; i < 6; i++)
-            {
-                var skirt = ecb.Instantiate(_skirtPrototype);
-                ecb.SetComponent(skirt, new TerrainSkirt { Direction = i });
-                ecb.SetComponent(skirt, new TerrainSkirtLinkedParent { ChunkParent = newChunk });
-                ecb.SetComponent(skirt, LocalTransform.FromPosition(pos * config.ChunkSize));
-                skirts.Add(skirt);
-            }
-
-            ecb.SetComponent(newChunk, new Chunk { Position = pos, Skirts = skirts });
+            // [移除] 所有与Skirt相关的创建和设置逻辑
+            ecb.SetComponent(newChunk, new Chunk { Position = pos });
             ecb.SetComponent(newChunk, LocalTransform.FromPosition(pos * config.ChunkSize));
             _chunkMap.TryAdd(pos, newChunk);
         }
 
         state.Dependency.Complete();
         ecb.Playback(state.EntityManager);
+        ecb.Dispose();
 
         requiredChunks.Dispose();
         chunksToDestroy.Dispose();
@@ -174,14 +165,7 @@ public partial struct ChunkManagerSystem : ISystem
         mgr.SetComponentEnabled<TerrainDeferredVisible>(_chunkPrototype, false);
         mgr.SetComponentEnabled<TerrainChunkRequestReadbackTag>(_chunkPrototype, true);
 
-        _skirtPrototype = mgr.CreateEntity();
-        mgr.AddComponent<LocalTransform>(_skirtPrototype);
-        mgr.AddComponent<LocalToWorld>(_skirtPrototype);
-        mgr.AddComponent<TerrainSkirt>(_skirtPrototype);
-        mgr.AddComponent<TerrainDeferredVisible>(_skirtPrototype);
-        mgr.AddComponent<TerrainSkirtLinkedParent>(_skirtPrototype);
-        mgr.AddComponent<Prefab>(_skirtPrototype);
-        mgr.SetComponentEnabled<TerrainDeferredVisible>(_skirtPrototype, false);
+        // [移除] _skirtPrototype的创建
 
         _prototypesCreated = true;
     }
@@ -214,28 +198,7 @@ public partial struct ChunkManagerSystem : ISystem
                 }
             }
             chunk.NeighbourMask = neighbourMask;
-            chunk.SkirtMask = CalculateEnabledSkirtMask(neighbourMask);
+            // [移除] SkirtMask的计算
         }
-    }
-
-    private static byte CalculateEnabledSkirtMask(BitField32 inputMask)
-    {
-        byte outputMask = 0;
-        for (int i = 0; i < 27; i++)
-        {
-            if (!inputMask.IsSet(i))
-            {
-                uint3 offset = VoxelUtils.IndexToPos(i, 3);
-                byte backing = 0;
-                BitUtils.SetBit(ref backing, 0, offset.x == 0);
-                BitUtils.SetBit(ref backing, 1, offset.y == 0);
-                BitUtils.SetBit(ref backing, 2, offset.z == 0);
-                BitUtils.SetBit(ref backing, 3, offset.x == 2);
-                BitUtils.SetBit(ref backing, 4, offset.y == 2);
-                BitUtils.SetBit(ref backing, 5, offset.z == 2);
-                outputMask |= backing;
-            }
-        }
-        return outputMask;
     }
 }

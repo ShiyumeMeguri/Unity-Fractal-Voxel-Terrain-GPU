@@ -1,4 +1,4 @@
-// Components/TerrainComponents.cs
+﻿// Components/TerrainComponents.cs
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -18,9 +18,10 @@ namespace Ruri.Voxel
         public ComputeShader VoxelComputeShader;
     }
 
-    public struct TerrainMesherConfig : IComponentData
+    // [修正] 从 struct 改为 class 以匹配 AddComponentObject API 的要求
+    public class TerrainMesherConfig : IComponentData
     {
-        public int MeshJobsPerTick;
+        public int meshJobsPerTick;
     }
 
     public struct VoxelEditRequest : IComponentData

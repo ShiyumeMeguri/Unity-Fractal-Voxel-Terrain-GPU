@@ -1,7 +1,9 @@
-﻿using System.Collections.Generic;
+﻿// Assets/ScriptsECS/Systems/TerrainMeshingSystem.cs
+using System.Collections.Generic;
 using System.Linq;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Entities.Graphics;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
@@ -17,7 +19,8 @@ namespace Ruri.Voxel
         private List<MeshJobHandler> _Handlers;
         private EntitiesGraphicsSystem _GraphicsSystem;
         private BatchMaterialID _MainMeshMaterialID;
-        private BatchMaterialID _SkirtMeshMaterialID;
+        // [移除] Skirt(裙边)材质ID已不再需要
+        // private BatchMaterialID _SkirtMeshMaterialID; 
         private bool _IsInitialized;
 
         private static readonly RenderMeshDescription RenderMeshDesc = new RenderMeshDescription(ShadowCastingMode.On, receiveShadows: true);
@@ -32,7 +35,8 @@ namespace Ruri.Voxel
         {
             if (!_IsInitialized)
             {
-                if (!SystemAPI.TryGetSingleton<TerrainMesherConfig>(out var mesherConfig) ||
+                // [修正] 获取class类型的组件应使用 SystemAPI.ManagedAPI
+                if (!SystemAPI.ManagedAPI.TryGetSingleton<TerrainMesherConfig>(out var mesherConfig) ||
                     !SystemAPI.ManagedAPI.TryGetSingleton<TerrainResources>(out var resources))
                 {
                     return;
@@ -82,15 +86,14 @@ namespace Ruri.Voxel
             _GraphicsSystem = World.GetOrCreateSystemManaged<EntitiesGraphicsSystem>();
             var terrainConfig = SystemAPI.GetSingleton<TerrainConfig>();
 
-            _Handlers = new List<MeshJobHandler>(mesherConfig.MeshJobsPerTick);
-            for (int i = 0; i < mesherConfig.MeshJobsPerTick; i++)
+            _Handlers = new List<MeshJobHandler>(mesherConfig.meshJobsPerTick);
+            for (int i = 0; i < mesherConfig.meshJobsPerTick; i++)
             {
                 _Handlers.Add(new MeshJobHandler(terrainConfig));
             }
 
-            var skirtMaterial = new Material(resources.ChunkMaterial);
+            // [移除] Skirt材质的创建和注册
             _MainMeshMaterialID = _GraphicsSystem.RegisterMaterial(resources.ChunkMaterial);
-            _SkirtMeshMaterialID = _GraphicsSystem.RegisterMaterial(skirtMaterial);
 
             _IsInitialized = true;
         }
@@ -142,24 +145,8 @@ namespace Ruri.Voxel
                 var deferredVisibility = SystemAPI.GetComponent<TerrainChunkRequestMeshingTag>(entity).DeferredVisibility;
                 SystemAPI.SetComponentEnabled<TerrainDeferredVisible>(entity, !deferredVisibility);
 
-                for (ushort i = 0; i < 6; i++)
-                {
-                    if (i >= chunk.Skirts.Length) continue;
-                    var skirtEntity = chunk.Skirts[i];
-                    if (!SystemAPI.Exists(skirtEntity)) continue;
-
-                    var skirtMaterialMeshInfo = new MaterialMeshInfo
-                    {
-                        MaterialID = _SkirtMeshMaterialID,
-                        MeshID = meshID,
-                        SubMesh = (ushort)(i + 1)
-                    };
-
-                    RenderMeshUtility.AddComponents(skirtEntity, EntityManager, RenderMeshDesc, skirtMaterialMeshInfo);
-                    SystemAPI.SetComponent(skirtEntity, new RenderBounds { Value = aabb });
-                    SystemAPI.SetComponent(skirtEntity, new WorldRenderBounds { Value = worldAABB });
-                    SystemAPI.SetComponentEnabled<TerrainDeferredVisible>(skirtEntity, BitUtils.IsBitSet(chunk.SkirtMask, i));
-                }
+                // [移除] 所有与Skirt相关的渲染组件设置逻辑
+                // for (ushort i = 0; i < 6; i++) { ... }
 
                 SystemAPI.SetComponentEnabled<TerrainChunkMesh>(entity, true);
                 var newMeshComponent = TerrainChunkMesh.FromJobHandlerStats(stats);

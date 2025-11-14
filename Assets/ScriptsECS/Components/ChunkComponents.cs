@@ -44,8 +44,7 @@ namespace Ruri.Voxel
     public struct Chunk : IComponentData
     {
         public int3 Position;
-        public byte SkirtMask;
-        public FixedList64Bytes<Entity> Skirts;
+        // [移除] 移除 SkirtMask 和 Skirts 字段，因为简化版引擎不需要
         public BitField32 NeighbourMask;
     }
 
@@ -72,7 +71,7 @@ namespace Ruri.Voxel
     {
         public NativeArray<float3> Vertices;
         public NativeArray<float3> Normals;
-        public NativeArray<float4> UVs; // [修正] 添加UVs字段
+        public NativeArray<float4> UVs;
         public NativeArray<int> MainMeshIndices;
         public JobHandle AccessJobHandle;
 
@@ -80,14 +79,14 @@ namespace Ruri.Voxel
         {
             var vertices = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
             var normals = new NativeArray<float3>(stats.VertexCount, Allocator.Persistent);
-            var uvs = new NativeArray<float4>(stats.VertexCount, Allocator.Persistent); // [修正] 分配UVs内存
+            var uvs = new NativeArray<float4>(stats.VertexCount, Allocator.Persistent);
             var indices = new NativeArray<int>(stats.MainMeshIndexCount, Allocator.Persistent);
 
             if (stats.VertexCount > 0)
             {
                 stats.Vertices.positions.GetSubArray(0, stats.VertexCount).CopyTo(vertices);
                 stats.Vertices.normals.GetSubArray(0, stats.VertexCount).CopyTo(normals);
-                stats.Vertices.uvs.GetSubArray(0, stats.VertexCount).CopyTo(uvs); // [修正] 复制UVs
+                stats.Vertices.uvs.GetSubArray(0, stats.VertexCount).CopyTo(uvs);
             }
             if (stats.MainMeshIndexCount > 0)
             {
@@ -98,7 +97,7 @@ namespace Ruri.Voxel
             {
                 Vertices = vertices,
                 Normals = normals,
-                UVs = uvs, // [修正] 赋值
+                UVs = uvs,
                 MainMeshIndices = indices,
             };
         }
@@ -108,7 +107,7 @@ namespace Ruri.Voxel
             AccessJobHandle.Complete();
             if (Vertices.IsCreated) Vertices.Dispose();
             if (Normals.IsCreated) Normals.Dispose();
-            if (UVs.IsCreated) UVs.Dispose(); // [修正] 释放UVs
+            if (UVs.IsCreated) UVs.Dispose();
             if (MainMeshIndices.IsCreated) MainMeshIndices.Dispose();
         }
     }
@@ -126,14 +125,4 @@ namespace Ruri.Voxel
     public struct TerrainChunkRequestCollisionTag : IComponentData, IEnableableComponent { }
     public struct TerrainChunkEndOfPipeTag : IComponentData, IEnableableComponent { }
     public struct TerrainDeferredVisible : IComponentData, IEnableableComponent { }
-
-    // --- 裙边实体组件 ---
-    public struct TerrainSkirt : IComponentData
-    {
-        public byte Direction;
-    }
-    public struct TerrainSkirtLinkedParent : IComponentData
-    {
-        public Entity ChunkParent;
-    }
 }

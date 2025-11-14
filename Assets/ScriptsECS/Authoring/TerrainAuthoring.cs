@@ -1,4 +1,5 @@
-﻿// Authoring/TerrainAuthoring.cs
+﻿
+// Authoring/TerrainAuthoring.cs
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -28,9 +29,10 @@ namespace Ruri.Voxel
                 });
 
                 // 2. 烘焙网格生成器配置
-                AddComponent(entity, new TerrainMesherConfig
+                // [修正] 由于 TerrainMesherConfig 已改为 class，这里必须使用 AddComponentObject
+                AddComponentObject(entity, new TerrainMesherConfig
                 {
-                    MeshJobsPerTick = authoring.MeshJobsPerTick
+                    meshJobsPerTick = authoring.MeshJobsPerTick
                 });
 
                 // 3. 烘焙托管资源（材质、ComputeShader），这些不能放在struct中
