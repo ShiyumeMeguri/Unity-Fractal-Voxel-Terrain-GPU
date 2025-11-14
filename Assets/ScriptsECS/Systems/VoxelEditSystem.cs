@@ -15,8 +15,6 @@ public partial struct VoxelEditSystem : ISystem
     public void OnCreate(ref SystemState state)
     {
         _chunkQuery = state.GetEntityQuery(typeof(Chunk), typeof(TerrainChunkVoxels));
-        state.RequireForUpdate<VoxelEditRequest>();
-        state.RequireForUpdate<TerrainConfig>();
     }
 
     [BurstCompile]

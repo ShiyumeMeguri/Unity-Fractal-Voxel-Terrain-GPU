@@ -27,8 +27,6 @@ namespace Ruri.Voxel
 
         protected override void OnCreate()
         {
-            RequireForUpdate<TerrainMesherConfig>();
-            RequireForUpdate<TerrainResources>();
         }
 
         protected override void OnUpdate()

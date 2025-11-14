@@ -61,10 +61,6 @@ public partial class TerrainReadbackSystem : SystemBase
 
     protected override void OnCreate()
     {
-        RequireForUpdate<TerrainConfig>();
-        RequireForUpdate<TerrainResources>();
-        RequireForUpdate<TerrainReadbackConfig>();
-
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
         int totalVoxelsInBatch = voxelsPerChunk * BATCH_SIZE;

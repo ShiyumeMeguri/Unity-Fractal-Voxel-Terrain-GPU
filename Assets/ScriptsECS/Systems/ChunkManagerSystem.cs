@@ -21,9 +21,6 @@ public partial struct ChunkManagerSystem : ISystem
         _prototypesCreated = false;
         _chunkMap = new NativeHashMap<int3, Entity>(1024, Allocator.Persistent);
 
-        state.RequireForUpdate<TerrainLoader>();
-        state.RequireForUpdate<TerrainConfig>();
-
         state.EntityManager.CreateSingleton<TerrainReadySystems>();
         Debug.Log("[ChunkManagerSystem] OnCreate: System created.");
     }
