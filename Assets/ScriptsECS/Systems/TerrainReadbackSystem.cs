@@ -14,7 +14,7 @@ using UnityEngine.Rendering;
 [UpdateAfter(typeof(ChunkManagerSystem))]
 public partial class TerrainReadbackSystem : SystemBase
 {
-    private const int BATCH_SIZE = 64; // 与目标框架一致，可以处理多达64个区块
+    private const int BATCH_SIZE = 64;
 
     private bool _free;
     private bool _disposed;
@@ -29,13 +29,15 @@ public partial class TerrainReadbackSystem : SystemBase
     {
         RequireForUpdate<TerrainConfig>();
         RequireForUpdate<TerrainResources>();
-        RequireForUpdate<TerrainReadbackConfig>(); // 确保系统启动
+        RequireForUpdate<TerrainReadbackConfig>();
 
         _free = true;
         _disposed = false;
         _dataFetched = false;
         _batchEntities = new List<Entity>(BATCH_SIZE);
         _copyHandles = new NativeArray<JobHandle>(BATCH_SIZE, Allocator.Persistent);
+
+        Debug.Log("[TerrainReadbackSystem] OnCreate: System created.");
     }
 
     protected override void OnDestroy()
@@ -46,6 +48,7 @@ public partial class TerrainReadbackSystem : SystemBase
         if (_copyHandles.IsCreated) _copyHandles.Dispose();
         if (_readbackData.IsCreated) _readbackData.Dispose();
         _voxelBuffer?.Release();
+        Debug.Log("[TerrainReadbackSystem] OnDestroy: System destroyed and resources released.");
     }
 
     protected override void OnUpdate()
@@ -53,6 +56,12 @@ public partial class TerrainReadbackSystem : SystemBase
         var query = GetEntityQuery(ComponentType.ReadOnly<Chunk>(), ComponentType.ReadOnly<TerrainChunkRequestReadbackTag>());
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.readback = query.IsEmpty && _free;
+
+        // [调试信息]
+        if (UnityEngine.Time.frameCount % 60 == 0) // 每秒打印一次状态
+        {
+            Debug.Log($"[TerrainReadbackSystem] OnUpdate: Free = {_free}, Query Empty = {query.IsEmpty}, Ready Flag = {readySystems.readback}");
+        }
 
         if (_free)
         {
@@ -78,20 +87,22 @@ public partial class TerrainReadbackSystem : SystemBase
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         var paddedChunkSize = config.PaddedChunkSize;
         int voxelsPerChunk = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
-        int totalVoxels = voxelsPerChunk * BATCH_SIZE;
+        int totalVoxelsInBatch = voxelsPerChunk * BATCH_SIZE;
 
-        if (_voxelBuffer == null || _voxelBuffer.count < totalVoxels)
+        if (_voxelBuffer == null || _voxelBuffer.count < totalVoxelsInBatch)
         {
             _voxelBuffer?.Release();
-            _voxelBuffer = new ComputeBuffer(totalVoxels, UnsafeUtility.SizeOf<VoxelData>());
+            _voxelBuffer = new ComputeBuffer(totalVoxelsInBatch, UnsafeUtility.SizeOf<VoxelData>());
             if (_readbackData.IsCreated) _readbackData.Dispose();
-            _readbackData = new NativeArray<VoxelData>(totalVoxels, Allocator.Persistent);
+            _readbackData = new NativeArray<VoxelData>(totalVoxelsInBatch, Allocator.Persistent);
+            Debug.Log($"[TerrainReadbackSystem] Re-allocated GPU buffers for batch size {BATCH_SIZE}.");
         }
 
         using var entities = query.ToEntityArray(Allocator.Temp);
         int numToProcess = math.min(BATCH_SIZE, entities.Length);
         if (numToProcess == 0) return;
 
+        Debug.Log($"[TerrainReadbackSystem] Starting new readback batch for {numToProcess} chunks.");
         _free = false;
         _batchEntities.Clear();
 
@@ -121,18 +132,21 @@ public partial class TerrainReadbackSystem : SystemBase
         Graphics.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
 
-        // 使用委托来处理回调，这在SystemBase中是安全的
         AsyncGPUReadback.Request(_voxelBuffer, numToProcess * voxelsPerChunk * UnsafeUtility.SizeOf<VoxelData>(), 0, OnVoxelDataReady);
     }
 
     private void OnVoxelDataReady(AsyncGPUReadbackRequest request)
     {
-        if (_disposed || request.hasError)
+        if (_disposed) return;
+
+        if (request.hasError)
         {
-            Debug.LogError("GPU Readback Error.");
+            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error!");
             ResetState();
             return;
         }
+
+        Debug.Log($"[TerrainReadbackSystem] GPU data received for {_batchEntities.Count} chunks. Scheduling CPU copy jobs.");
 
         var data = request.GetData<VoxelData>();
         data.CopyTo(_readbackData);
@@ -145,21 +159,20 @@ public partial class TerrainReadbackSystem : SystemBase
             Entity entity = _batchEntities[i];
             if (!SystemAPI.Exists(entity)) continue;
 
-            // [修正] 我们需要为每个区块分配自己的持久化NativeArray
             var voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent);
             var sourceSlice = _readbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
 
             var copyJob = new CopyJob { Source = sourceSlice, Destination = voxels };
             _copyHandles[i] = copyJob.Schedule();
 
-            // 为实体添加/设置TerrainChunkVoxels组件
+            // 确保先释放旧数据（如果存在）
             if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
             {
-                // 如果已经存在，先释放旧数据
                 var oldData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
                 oldData.Dispose();
             }
-            SystemAPI.SetComponent(entity, new TerrainChunkVoxels { Voxels = voxels });
+
+            SystemAPI.SetComponent(entity, new TerrainChunkVoxels { Voxels = voxels, AsyncWriteJobHandle = _copyHandles[i] });
             SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, true);
         }
 
@@ -169,6 +182,7 @@ public partial class TerrainReadbackSystem : SystemBase
 
     private void FinalizeBatch()
     {
+        Debug.Log($"[TerrainReadbackSystem] Finalizing batch of {_batchEntities.Count} chunks.");
         foreach (var entity in _batchEntities)
         {
             if (!SystemAPI.Exists(entity)) continue;

@@ -19,11 +19,11 @@ namespace Ruri.Voxel
             {
                 var entity = GetEntity(TransformUsageFlags.None);
 
-                // 1. 烘焙地形核心配置，所有系统都将读取这个单例
+                // 1. 烘焙地形核心配置
                 AddComponent(entity, new TerrainConfig
                 {
                     ChunkSize = authoring.ChunkSize,
-                    PaddedChunkSize = authoring.ChunkSize + 2, // 直接在这里计算Padding后的大小
+                    PaddedChunkSize = authoring.ChunkSize + 2,
                     ChunkSpawnSize = authoring.ChunkSpawnSize
                 });
 
@@ -33,15 +33,18 @@ namespace Ruri.Voxel
                     meshJobsPerTick = authoring.MeshJobsPerTick
                 });
 
-                // 3. 烘焙托管资源（材质、ComputeShader），这些不能放在struct中
+                // 3. 烘焙托管资源
                 AddComponentObject(entity, new TerrainResources
                 {
                     ChunkMaterial = authoring.ChunkMaterial,
                     VoxelComputeShader = authoring.VoxelComputeShader
                 });
 
-                // 4. [修正] 烘焙Readback配置，以激活TerrainReadbackSystem
+                // 4. [修正] 烘焙Readback配置，这是激活TerrainReadbackSystem的关键！
                 AddComponent(entity, new TerrainReadbackConfig());
+
+                // [调试信息] 确认Authoring已执行
+                Debug.Log("[TerrainAuthoring.Baker] Successfully baked all terrain singleton components.");
             }
         }
     }

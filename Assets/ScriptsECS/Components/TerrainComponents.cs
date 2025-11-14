@@ -18,7 +18,7 @@ namespace Ruri.Voxel
         public ComputeShader VoxelComputeShader;
     }
 
-    // [修正] 从 struct 改为 class 以匹配 AddComponentObject API 的要求
+    // [修正] 从 struct 改为 class 以匹配 AddComponentObject API
     public class TerrainMesherConfig : IComponentData
     {
         public int meshJobsPerTick;
