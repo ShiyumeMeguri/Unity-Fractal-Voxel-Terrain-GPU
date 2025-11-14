@@ -1,6 +1,7 @@
 ﻿// Systems/TerrainReadbackSystem.cs
 using Ruri.Voxel;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -10,20 +11,53 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+[StructLayout(LayoutKind.Sequential)]
+public struct MultiReadbackTransform
+{
+    public float3 position;
+    public float scale;
+}
+
+[BurstCompile]
+public unsafe struct GpuToCpuCopy : IJobParallelFor
+{
+    [WriteOnly]
+    public NativeArray<VoxelData> Destination;
+    [NativeDisableUnsafePtrRestriction]
+    [ReadOnly]
+    public VoxelData* Source;
+
+    public void Execute(int index)
+    {
+        Destination[index] = Source[index];
+    }
+}
+
+
 [UpdateInGroup(typeof(SimulationSystemGroup))]
 [UpdateAfter(typeof(ChunkManagerSystem))]
 public partial class TerrainReadbackSystem : SystemBase
 {
     private const int BATCH_SIZE = 64;
+    private const int BATCH_GRID_DIM = 4;
 
     private bool _free;
     private bool _disposed;
-    private bool _dataFetched;
+    private bool _countersFetched;
+    private bool _voxelsFetched;
+
     private List<Entity> _batchEntities;
-    private ComputeBuffer _voxelBuffer;
-    private NativeArray<VoxelData> _readbackData;
     private JobHandle? _pendingCopies;
     private NativeArray<JobHandle> _copyHandles;
+
+    private NativeArray<VoxelData> _readbackData;
+    private NativeArray<int> _multiSignCounters;
+
+    private NativeArray<MultiReadbackTransform> _transforms;
+    private ComputeBuffer _voxelBuffer;
+    private ComputeBuffer _multiSignCountersBuffer;
+    private ComputeBuffer _transformsBuffer;
+
 
     protected override void OnCreate()
     {
@@ -31,13 +65,24 @@ public partial class TerrainReadbackSystem : SystemBase
         RequireForUpdate<TerrainResources>();
         RequireForUpdate<TerrainReadbackConfig>();
 
+        var config = SystemAPI.GetSingleton<TerrainConfig>();
+        int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
+        int totalVoxelsInBatch = voxelsPerChunk * BATCH_SIZE;
+
         _free = true;
         _disposed = false;
-        _dataFetched = false;
         _batchEntities = new List<Entity>(BATCH_SIZE);
         _copyHandles = new NativeArray<JobHandle>(BATCH_SIZE, Allocator.Persistent);
 
-        Debug.Log("[TerrainReadbackSystem] OnCreate: System created.");
+        _readbackData = new NativeArray<VoxelData>(totalVoxelsInBatch, Allocator.Persistent);
+        _multiSignCounters = new NativeArray<int>(BATCH_SIZE, Allocator.Persistent);
+        _transforms = new NativeArray<MultiReadbackTransform>(BATCH_SIZE, Allocator.Persistent);
+
+        _voxelBuffer = new ComputeBuffer(totalVoxelsInBatch, UnsafeUtility.SizeOf<VoxelData>());
+        _multiSignCountersBuffer = new ComputeBuffer(BATCH_SIZE, sizeof(int));
+        _transformsBuffer = new ComputeBuffer(BATCH_SIZE, UnsafeUtility.SizeOf<MultiReadbackTransform>());
+
+        Debug.Log("[TerrainReadbackSystem] OnCreate: System created and buffers allocated.");
     }
 
     protected override void OnDestroy()
@@ -47,7 +92,11 @@ public partial class TerrainReadbackSystem : SystemBase
         AsyncGPUReadback.WaitAllRequests();
         if (_copyHandles.IsCreated) _copyHandles.Dispose();
         if (_readbackData.IsCreated) _readbackData.Dispose();
+        if (_multiSignCounters.IsCreated) _multiSignCounters.Dispose();
+        if (_transforms.IsCreated) _transforms.Dispose();
         _voxelBuffer?.Release();
+        _multiSignCountersBuffer?.Release();
+        _transformsBuffer?.Release();
         Debug.Log("[TerrainReadbackSystem] OnDestroy: System destroyed and resources released.");
     }
 
@@ -57,16 +106,11 @@ public partial class TerrainReadbackSystem : SystemBase
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.readback = query.IsEmpty && _free;
 
-        if (UnityEngine.Time.frameCount % 120 == 0)
-        {
-            Debug.Log($"[TerrainReadbackSystem] OnUpdate: Free = {_free}, Chunks to Readback = {query.CalculateEntityCount()}, Ready Flag = {readySystems.readback}");
-        }
-
         if (_free)
         {
             TryBeginReadback(query);
         }
-        else if (_dataFetched && _pendingCopies.HasValue)
+        else if (_voxelsFetched && _countersFetched && _pendingCopies.HasValue)
         {
             if (_pendingCopies.Value.IsCompleted)
             {
@@ -81,20 +125,10 @@ public partial class TerrainReadbackSystem : SystemBase
         if (query.IsEmpty) return;
 
         var resources = SystemAPI.ManagedAPI.GetSingleton<TerrainResources>();
-        if (resources.VoxelComputeShader == null) return;
-
-        var config = SystemAPI.GetSingleton<TerrainConfig>();
-        var paddedChunkSize = config.PaddedChunkSize;
-        int voxelsPerChunk = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
-        int totalVoxelsInBatch = voxelsPerChunk * BATCH_SIZE;
-
-        if (_voxelBuffer == null || _voxelBuffer.count < totalVoxelsInBatch)
+        if (resources.VoxelComputeShader == null)
         {
-            _voxelBuffer?.Release();
-            _voxelBuffer = new ComputeBuffer(totalVoxelsInBatch, UnsafeUtility.SizeOf<VoxelData>());
-            if (_readbackData.IsCreated) _readbackData.Dispose();
-            _readbackData = new NativeArray<VoxelData>(totalVoxelsInBatch, Allocator.Persistent);
-            Debug.Log($"[TerrainReadbackSystem] Allocated GPU buffers for batch size {BATCH_SIZE}.");
+            Debug.LogError("[TerrainReadbackSystem] VoxelComputeShader is not assigned in TerrainAuthoring.");
+            return;
         }
 
         using var entities = query.ToEntityArray(Allocator.Temp);
@@ -103,17 +137,13 @@ public partial class TerrainReadbackSystem : SystemBase
 
         Debug.Log($"[TerrainReadbackSystem] Starting new readback batch for {numToProcess} chunks.");
         _free = false;
+        _voxelsFetched = false;
+        _countersFetched = false;
+        _pendingCopies = null;
         _batchEntities.Clear();
 
-        var cmd = CommandBufferPool.Get("Voxel Generation Batch");
-        var compute = resources.VoxelComputeShader;
-        int kernel = compute.FindKernel("CSMain");
-
-        uint tx, ty, tz;
-        compute.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
-        var groups = (paddedChunkSize + new int3((int)tx - 1, (int)ty - 1, (int)tz - 1)) / new int3((int)tx, (int)ty, (int)tz);
-
-        cmd.SetComputeBufferParam(compute, kernel, "asyncVoxelBuffer", _voxelBuffer);
+        var config = SystemAPI.GetSingleton<TerrainConfig>();
+        var paddedChunkSize = config.PaddedChunkSize;
 
         for (int i = 0; i < numToProcess; i++)
         {
@@ -122,34 +152,113 @@ public partial class TerrainReadbackSystem : SystemBase
             EntityManager.SetComponentEnabled<TerrainChunkRequestReadbackTag>(entity, false);
 
             var chunk = SystemAPI.GetComponent<Chunk>(entity);
-            cmd.SetComputeIntParam(compute, "baseIndex", i * voxelsPerChunk);
-            cmd.SetComputeIntParams(compute, "chunkPosition", chunk.Position.x, chunk.Position.y, chunk.Position.z);
-            cmd.SetComputeIntParams(compute, "chunkSize", paddedChunkSize.x, paddedChunkSize.y, paddedChunkSize.z);
-            cmd.DispatchCompute(compute, kernel, groups.x, groups.y, groups.z);
+            _transforms[i] = new MultiReadbackTransform
+            {
+                position = chunk.Position * config.ChunkSize,
+                scale = 1.0f // Assuming scale is always 1 for simplicity
+            };
         }
+
+        var cmd = CommandBufferPool.Get("Voxel Generation Batch");
+        var compute = resources.VoxelComputeShader;
+        int kernel = compute.FindKernel("CSMain");
+
+        // Upload transforms and clear counters
+        _transformsBuffer.SetData(_transforms, 0, 0, numToProcess);
+        _multiSignCountersBuffer.SetData(new int[BATCH_SIZE]);
+
+        cmd.SetComputeBufferParam(compute, kernel, "asyncVoxelBuffer", _voxelBuffer);
+        cmd.SetComputeBufferParam(compute, kernel, "multi_transforms_buffer", _transformsBuffer);
+        cmd.SetComputeBufferParam(compute, kernel, "multi_counters_buffer", _multiSignCountersBuffer);
+
+        cmd.SetComputeIntParam(compute, "PADDED_CHUNK_SIZE", paddedChunkSize.x);
+        cmd.SetComputeIntParam(compute, "PADDED_CHUNK_VOLUME", paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z);
+        cmd.SetComputeIntParam(compute, "BATCH_GRID_DIM", BATCH_GRID_DIM);
+        cmd.SetComputeIntParam(compute, "ChunksInBatch", numToProcess);
+
+        uint tx, ty, tz;
+        compute.GetKernelThreadGroupSizes(kernel, out tx, out ty, out tz);
+        int totalDispatchX = paddedChunkSize.x * BATCH_GRID_DIM;
+        int totalDispatchY = paddedChunkSize.y * BATCH_GRID_DIM;
+        int totalDispatchZ = paddedChunkSize.z * BATCH_GRID_DIM;
+
+        int groupsX = (totalDispatchX + (int)tx - 1) / (int)tx;
+        int groupsY = (totalDispatchY + (int)ty - 1) / (int)ty;
+        int groupsZ = (totalDispatchZ + (int)tz - 1) / (int)tz;
+
+        cmd.DispatchCompute(compute, kernel, groupsX, groupsY, groupsZ);
 
         Graphics.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
 
-        AsyncGPUReadback.Request(_voxelBuffer, numToProcess * voxelsPerChunk * UnsafeUtility.SizeOf<VoxelData>(), 0, OnVoxelDataReady);
+        AsyncGPUReadback.Request(_voxelBuffer, numToProcess * paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z * UnsafeUtility.SizeOf<VoxelData>(), 0, OnVoxelDataReady);
+        AsyncGPUReadback.Request(_multiSignCountersBuffer, numToProcess * sizeof(int), 0, OnCountersReady);
     }
 
-    private void OnVoxelDataReady(AsyncGPUReadbackRequest request)
+    private unsafe void OnVoxelDataReady(AsyncGPUReadbackRequest request)
     {
         if (_disposed) return;
 
         if (request.hasError)
         {
-            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error!");
+            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error for voxel data!");
             ResetState();
             return;
         }
 
-        Debug.Log($"[TerrainReadbackSystem] GPU data received for {_batchEntities.Count} chunks. Scheduling CPU copy jobs.");
+        var config = SystemAPI.GetSingleton<TerrainConfig>();
+        int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
-        var data = request.GetData<VoxelData>();
-        data.CopyTo(_readbackData);
+        VoxelData* sourcePtr = (VoxelData*)request.GetData<VoxelData>().GetUnsafeReadOnlyPtr();
 
+        for (int i = 0; i < _batchEntities.Count; i++)
+        {
+            Entity entity = _batchEntities[i];
+            if (!SystemAPI.Exists(entity)) continue;
+
+            var voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent);
+
+            var copyJob = new GpuToCpuCopy
+            {
+                Source = sourcePtr + (i * voxelsPerChunk),
+                Destination = voxels
+            };
+
+            ref var chunkVoxels = ref SystemAPI.GetComponentRW<TerrainChunkVoxels>(entity).ValueRW;
+            if (chunkVoxels.IsCreated) chunkVoxels.Dispose();
+
+            var oldHandle = JobHandle.CombineDependencies(chunkVoxels.AsyncReadJobHandle, chunkVoxels.AsyncWriteJobHandle);
+            var handle = copyJob.Schedule(voxels.Length, 256, oldHandle);
+
+            _copyHandles[i] = handle;
+
+            chunkVoxels.Voxels = voxels;
+            chunkVoxels.AsyncWriteJobHandle = handle;
+
+            SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, true);
+        }
+
+        _pendingCopies = JobHandle.CombineDependencies(_copyHandles.Slice(0, _batchEntities.Count));
+        _voxelsFetched = true;
+    }
+
+    private void OnCountersReady(AsyncGPUReadbackRequest request)
+    {
+        if (_disposed) return;
+        if (request.hasError)
+        {
+            Debug.LogError("[TerrainReadbackSystem] GPU Readback Error for sign counters!");
+            ResetState();
+            return;
+        }
+
+        request.GetData<int>().CopyTo(_multiSignCounters);
+        _countersFetched = true;
+    }
+
+    private void FinalizeBatch()
+    {
+        Debug.Log($"[TerrainReadbackSystem] Finalizing batch of {_batchEntities.Count} chunks.");
         var config = SystemAPI.GetSingleton<TerrainConfig>();
         int voxelsPerChunk = config.PaddedChunkSize.x * config.PaddedChunkSize.y * config.PaddedChunkSize.z;
 
@@ -158,32 +267,21 @@ public partial class TerrainReadbackSystem : SystemBase
             Entity entity = _batchEntities[i];
             if (!SystemAPI.Exists(entity)) continue;
 
-            var voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent);
-            var sourceSlice = _readbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
+            int signCount = _multiSignCounters[i];
+            bool isEmptyOrFull = math.abs(signCount) == voxelsPerChunk;
+            bool skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).SkipMeshingIfEmpty;
 
-            var copyJob = new CopyJob { Source = sourceSlice, Destination = voxels };
-            _copyHandles[i] = copyJob.Schedule();
-
-            if (SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(entity))
-            {
-                SystemAPI.GetComponent<TerrainChunkVoxels>(entity).Dispose();
-            }
-
-            SystemAPI.SetComponent(entity, new TerrainChunkVoxels { Voxels = voxels, AsyncWriteJobHandle = _copyHandles[i] });
-            SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, true);
-        }
-
-        _pendingCopies = JobHandle.CombineDependencies(_copyHandles.Slice(0, _batchEntities.Count));
-        _dataFetched = true;
-    }
-
-    private void FinalizeBatch()
-    {
-        Debug.Log($"[TerrainReadbackSystem] Finalizing batch of {_batchEntities.Count} chunks.");
-        foreach (var entity in _batchEntities)
-        {
-            if (!SystemAPI.Exists(entity)) continue;
             SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
+
+            if (isEmptyOrFull && skipIfEmpty)
+            {
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
+                SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
+            }
+            else
+            {
+                SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
+            }
         }
         ResetState();
     }
@@ -191,16 +289,9 @@ public partial class TerrainReadbackSystem : SystemBase
     private void ResetState()
     {
         _free = true;
-        _dataFetched = false;
+        _voxelsFetched = false;
+        _countersFetched = false;
         _pendingCopies = null;
         _batchEntities.Clear();
-    }
-
-    [BurstCompile]
-    private struct CopyJob : IJob
-    {
-        [ReadOnly] public NativeSlice<VoxelData> Source;
-        [WriteOnly] public NativeArray<VoxelData> Destination;
-        public void Execute() => Source.CopyTo(Destination);
     }
 }
