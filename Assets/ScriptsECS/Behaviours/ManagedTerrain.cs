@@ -1,20 +1,22 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace Ruri.Voxel
 {
-    public class ManagedTerrain : MonoBehaviour {
+    public class ManagedTerrain : MonoBehaviour
+    {
         public static ManagedTerrain instance;
 
-        void Awake() {
-            instance = this;
-        }
+        // [修正] 暂时移除对Compiler和Graph的引用，因为我们简化了流程
+        // public ManagedTerrainCompiler compiler;
 
-        void Start() {
+        void Awake()
+        {
             instance = this;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void Init() {
+        static void Init()
+        {
             instance = null;
         }
     }

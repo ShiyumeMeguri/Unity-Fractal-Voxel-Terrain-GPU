@@ -1,25 +1,20 @@
-﻿// Assets/ScriptsECS/Systems/TerrainReadbackSystem.cs
-using Ruri.Voxel;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using Unity.Burst;
+﻿using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+
 namespace Ruri.Voxel
 {
-    // This MUST stay as a SystemBase since we have some AsyncGPUReadback stuff with delegates that keep a handle to the properties stored here
     [UpdateInGroup(typeof(TerrainFixedStepSystemGroup))]
-    [UpdateAfter(typeof(TerrainManagerSystem))]
+    // [修正] 移除对TerrainManagerSystem的依赖，因为我们还未完全实现它
     public partial class TerrainReadbackSystem : SystemBase
     {
         private bool free;
-        private NativeArray<GpuVoxel> multiData;
+        private NativeArray<VoxelData> multiData; // [核心修改] 使用VoxelData
         private List<Entity> entities;
         private JobHandle? pendingCopies;
         private NativeArray<JobHandle> copies;
@@ -30,19 +25,23 @@ namespace Ruri.Voxel
         private MultiReadbackExecutor multiExecutor;
         private ComputeBuffer multiSignCountersBuffer;
 
+        // [新增] 存储对ComputeShader的引用
+        private ComputeShader _VoxelComputeShader;
+
         protected override void OnCreate()
         {
             RequireForUpdate<TerrainReadbackConfig>();
             RequireForUpdate<TerrainReadySystems>();
-            multiData = new NativeArray<GpuVoxel>(VoxelUtils.VOLUME * VoxelUtils.MULTI_READBACK_CHUNK_COUNT, Allocator.Persistent);
+            // [新增] 获取资源单例
+            RequireForUpdate<TerrainResources>();
+
+            multiData = new NativeArray<VoxelData>(VoxelUtils.VOLUME * VoxelUtils.MULTI_READBACK_CHUNK_COUNT, Allocator.Persistent);
             entities = new List<Entity>(VoxelUtils.MULTI_READBACK_CHUNK_COUNT);
             copies = new NativeArray<JobHandle>(VoxelUtils.MULTI_READBACK_CHUNK_COUNT, Allocator.Persistent);
             multiSignCounters = new NativeArray<int>(VoxelUtils.MULTI_READBACK_CHUNK_COUNT, Allocator.Persistent);
             transforms = new NativeArray<MultiReadbackTransform>(VoxelUtils.MULTI_READBACK_CHUNK_COUNT, Allocator.Persistent);
-            free = true;
-            pendingCopies = null;
-            voxelsFetched = false;
-            countersFetched = false;
+
+            Reset();
             disposed = false;
 
             multiExecutor = new MultiReadbackExecutor();
@@ -62,32 +61,42 @@ namespace Ruri.Voxel
         protected override void OnDestroy()
         {
             disposed = true;
+            pendingCopies?.Complete();
             AsyncGPUReadback.WaitAllRequests();
-            multiData.Dispose();
-            entities.Clear();
-            multiSignCounters.Dispose();
-            copies.Dispose();
+
+            if (multiData.IsCreated) multiData.Dispose();
+            if (multiSignCounters.IsCreated) multiSignCounters.Dispose();
+            if (copies.IsCreated) copies.Dispose();
+            if (transforms.IsCreated) transforms.Dispose();
+
             multiExecutor.DisposeResources();
-            multiSignCountersBuffer.Dispose();
-            transforms.Dispose();
+            multiSignCountersBuffer?.Dispose();
         }
 
         protected override void OnUpdate()
         {
-            EntityQuery query = SystemAPI.QueryBuilder().WithAll<TerrainChunkVoxels, TerrainChunk, TerrainChunkRequestReadbackTag>().Build();
-            bool ready = query.CalculateEntityCount() == 0 && free;
-
-            RefRW<TerrainReadySystems> _ready = SystemAPI.GetSingletonRW<TerrainReadySystems>();
-            _ready.ValueRW.readback = ready;
-
-            if (ManagedTerrain.instance == null)
+            // 在第一次更新时获取ComputeShader
+            if (_VoxelComputeShader == null)
             {
-                throw new System.Exception("Missing managed terrain instance");
+                if (SystemAPI.ManagedAPI.TryGetSingleton<TerrainResources>(out var resources))
+                {
+                    _VoxelComputeShader = resources.VoxelComputeShader;
+                }
+                else
+                {
+                    return; // 等待资源就绪
+                }
             }
+
+            var query = SystemAPI.QueryBuilder().WithAll<TerrainChunkVoxels, Chunk, TerrainChunkRequestReadbackTag>().Build();
+            bool ready = query.IsEmpty && free;
+
+            ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
+            readySystems.readback = ready;
 
             if (free)
             {
-                TryBeginReadback();
+                TryBeginReadback(query);
             }
             else
             {
@@ -95,128 +104,89 @@ namespace Ruri.Voxel
             }
         }
 
-        private void TryBeginReadback()
+        private void TryBeginReadback(EntityQuery query)
         {
-            EntityQuery query = SystemAPI.QueryBuilder().WithAll<TerrainChunkVoxels, TerrainChunk, TerrainChunkRequestReadbackTag>().Build();
-            NativeArray<TerrainChunkVoxels> voxelsArray = query.ToComponentDataArray<TerrainChunkVoxels>(Allocator.Temp);
-            NativeArray<TerrainChunk> chunksArray = query.ToComponentDataArray<TerrainChunk>(Allocator.Temp);
-            NativeArray<Entity> entitiesArray = query.ToEntityArray(Allocator.Temp);
+            using var entitiesArray = query.ToEntityArray(Allocator.Temp);
+            if (entitiesArray.Length == 0) return;
 
-            if (voxelsArray.Length == 0)
-            {
-                return;
-            }
-
-            int numChunks = math.min(VoxelUtils.MULTI_READBACK_CHUNK_COUNT, voxelsArray.Length);
-
+            int numChunks = math.min(VoxelUtils.MULTI_READBACK_CHUNK_COUNT, entitiesArray.Length);
             free = false;
-
-            // Change chunk states, since we are now waiting for voxel readback
             entities.Clear();
+
+            var terrainConfig = SystemAPI.GetSingleton<TerrainConfig>();
+
             for (int j = 0; j < numChunks; j++)
             {
-                TerrainChunk chunk = chunksArray[j];
                 Entity entity = entitiesArray[j];
                 entities.Add(entity);
 
-                float3 pos = (float3)chunk.node.position;
-                float scale = chunk.node.size / VoxelUtils.PHYSICAL_CHUNK_SIZE;
+                // [修正] 从Chunk组件获取位置信息，而不是OctreeNode
+                var chunk = SystemAPI.GetComponent<Chunk>(entity);
+                float3 pos = chunk.Position * terrainConfig.ChunkSize;
+                float scale = 1.0f; // 简化模型，没有LOD，所以缩放是1
 
-                transforms[j] = new MultiReadbackTransform
-                {
-                    scale = scale,
-                    position = pos
-                };
-
-                // Disable the tag component since we won't need to readback anymore
+                transforms[j] = new MultiReadbackTransform { scale = scale, position = pos };
                 SystemAPI.SetComponentEnabled<TerrainChunkRequestReadbackTag>(entity, false);
             }
 
-            // Size*4 since we are using octal generation!!!! (not really octal atp but wtv)
-            MultiReadbackExecutorParameters parameters = new MultiReadbackExecutorParameters()
+            var parameters = new MultiReadbackExecutorParameters()
             {
                 commandBufferName = "Readback Async Dispatch",
-                transforms = transforms,
-                kernelName = "CSVoxels",
+                transforms = transforms.GetSubArray(0, numChunks),
+                kernelName = "CSMain", // 对应你的Compute Shader内核名
                 updateInjected = false,
-                compiler = ManagedTerrain.instance.compiler,
                 multiSignCountersBuffer = multiSignCountersBuffer,
                 seed = SystemAPI.GetSingleton<TerrainSeed>(),
             };
 
-            GraphicsFence fence = multiExecutor.Execute(parameters);
+            // [修正] Execute现在需要传入ComputeShader对象
+            GraphicsFence fence = multiExecutor.Execute(_VoxelComputeShader, parameters);
 
-            parameters.kernelName = "CSLayers";
-            fence = multiExecutor.Execute(parameters, fence);
+            // [简化] 移除了对CSLayers的调用
 
-            CommandBuffer cmds = new CommandBuffer();
-            cmds.name = "Terrain Readback System Async Readback";
+            var cmds = new CommandBuffer { name = "Terrain Readback System Async Readback" };
             cmds.WaitOnAsyncGraphicsFence(fence, SynchronisationStageFlags.ComputeProcessing);
 
-            // Request GPU data into the native array we allocated at the start
-            // When we get it back, start off multiple memcpy jobs that we can wait for the next tick
-            // This avoids waiting on the memory copies and can spread them out on many threads
-            NativeArray<GpuVoxel> voxelData = multiData;
-            cmds.RequestAsyncReadbackIntoNativeArray(
-                ref voxelData,
-                multiExecutor.Buffers["voxels"],
-                delegate (AsyncGPUReadbackRequest asyncRequest) {
-                    unsafe
+            var voxelData = multiData;
+            cmds.RequestAsyncReadback(multiExecutor.Buffers["voxels"].buffer, (AsyncGPUReadbackRequest request) =>
+            {
+                if (disposed || request.hasError) return;
+
+                unsafe
+                {
+                    var pointer = (VoxelData*)request.GetData<VoxelData>().GetUnsafeReadOnlyPtr();
+                    for (int j = 0; j < entities.Count; j++)
                     {
-                        if (disposed)
-                            return;
+                        Entity entity = entities[j];
+                        if (!SystemAPI.Exists(entity) || !SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(entity)) continue;
 
-                        // We have to do this to stop unity from complaining about using the data...
-                        // fuck you...
-                        GpuVoxel* pointer = (GpuVoxel*)NativeArrayUnsafeUtility.GetUnsafePtr<GpuVoxel>(multiData);
+                        var src = pointer + (VoxelUtils.VOLUME * j);
+                        ref var voxels = ref SystemAPI.GetComponentRW<TerrainChunkVoxels>(entity).ValueRW;
 
-                        // Start doing the memcpy asynchronously...
-                        for (int j = 0; j < entities.Count; j++)
+                        var dep = JobHandle.CombineDependencies(voxels.asyncReadJobHandle, voxels.asyncWriteJobHandle);
+                        var handle = new GpuToCpuCopy
                         {
-                            Entity entity = entities[j];
+                            cpuData = voxels.data,
+                            rawGpuData = src,
+                        }.Schedule(VoxelUtils.VOLUME, 256, dep);
 
-                            // Since we are using a buffer where the data for chunks is contiguous
-                            // we can just do parallel copies from the source buffer at the appropriate offset
-                            GpuVoxel* src = pointer + (VoxelUtils.VOLUME * j);
-
-                            bool enabled = SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(entity);
-
-                            if (!enabled)
-                                return;
-
-                            RefRW<TerrainChunkVoxels> _voxels = SystemAPI.GetComponentRW<TerrainChunkVoxels>(entity);
-                            ref TerrainChunkVoxels voxels = ref _voxels.ValueRW;
-
-                            JobHandle dep = JobHandle.CombineDependencies(voxels.asyncReadJobHandle, voxels.asyncWriteJobHandle);
-                            JobHandle handle = new GpuToCpuCopy
-                            {
-                                cpuData = voxels.data,
-                                rawGpuData = src,
-                            }.Schedule(VoxelUtils.VOLUME, BatchUtils.HALF_BATCH, dep);
-
-                            copies[j] = handle;
-                            voxels.asyncWriteJobHandle = handle;
-                        }
-
-                        pendingCopies = JobHandle.CombineDependencies(copies.Slice(0, entities.Count));
-                        voxelsFetched = true;
+                        copies[j] = handle;
+                        voxels.asyncWriteJobHandle = handle;
                     }
+                    pendingCopies = JobHandle.CombineDependencies(copies.Slice(0, entities.Count));
                 }
-            );
+                voxelsFetched = true;
+            });
 
-            cmds.RequestAsyncReadbackIntoNativeArray(
-                ref multiSignCounters,
-                multiSignCountersBuffer,
-                delegate (AsyncGPUReadbackRequest asyncRequest) {
-                    if (disposed)
-                        return;
-
-
-                    countersFetched = true;
-                }
-            );
+            cmds.RequestAsyncReadback(multiSignCountersBuffer, (AsyncGPUReadbackRequest request) =>
+            {
+                if (disposed || request.hasError) return;
+                multiSignCounters.CopyFrom(request.GetData<int>());
+                countersFetched = true;
+            });
 
             Graphics.ExecuteCommandBuffer(cmds);
+            cmds.Dispose();
         }
 
         private void TryCheckIfReadbackComplete()
@@ -225,27 +195,21 @@ namespace Ruri.Voxel
             {
                 pendingCopies.Value.Complete();
 
-                // Since we now fetch n+2 voxels (66^3) we can actually use the pos/neg optimizations
-                // to check early if we need to do any meshing for a chunk whose voxels are from the GPU!
-                // heheheha....
                 for (int j = 0; j < entities.Count; j++)
                 {
-                    int count = multiSignCounters[j];
                     Entity entity = entities[j];
+                    if (!SystemAPI.Exists(entity)) continue;
 
-                    int max = VoxelUtils.VOLUME;
-                    bool empty = count == max || count == -max;
-                    bool skipIfEmpty = SystemAPI.GetComponent<TerrainChunkRequestReadbackTag>(entity).skipMeshingIfEmpty;
+                    // 简单起见，我们总是尝试为非空区块生成网格
+                    bool skipMeshing = false;
 
-                    // Voxel data is always ready no matter what
+                    // [简化] 逻辑简化，不依赖复杂的 empty/skipIfEmpty 判断
+                    // if (empty && skipIfEmpty) ...
+
                     SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
-
-                    // Skip empty chunks!!!
-                    if (empty && skipIfEmpty)
+                    if (skipMeshing)
                     {
                         SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, false);
-
-                        // this chunk will directly go to the end of pipe, no need to deal with it anymore
                         SystemAPI.SetComponentEnabled<TerrainChunkEndOfPipeTag>(entity, true);
                     }
                     else
@@ -253,7 +217,6 @@ namespace Ruri.Voxel
                         SystemAPI.SetComponentEnabled<TerrainChunkRequestMeshingTag>(entity, true);
                     }
                 }
-
                 Reset();
             }
         }
