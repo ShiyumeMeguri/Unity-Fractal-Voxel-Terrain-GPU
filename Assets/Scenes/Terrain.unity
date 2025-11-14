@@ -119,6 +119,84 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1001 &131074366
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 566389634701878972, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: debugGui
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 566389634701878972, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: debugChunkBounds
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4296326610441593126, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_Name
+      value: Managed Terrain
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6566762760026143042, guid: acc2dbdd692c47b40af8788c582cd633,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: acc2dbdd692c47b40af8788c582cd633, type: 3}
 --- !u!1 &705507993
 GameObject:
   m_ObjectHideFlags: 0
@@ -479,7 +557,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1938707326
+--- !u!1 &1767121422
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -487,34 +565,49 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1938707328}
-  - component: {fileID: 1938707327}
+  - component: {fileID: 1767121428}
+  - component: {fileID: 1767121424}
+  - component: {fileID: 1767121430}
+  - component: {fileID: 1767121429}
   m_Layer: 0
-  m_Name: ManagedTerrain
-  m_TagString: Untagged
+  m_Name: Character
+  m_TagString: MainCamera
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1938707327
-MonoBehaviour:
+--- !u!143 &1767121424
+CharacterController:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1938707326}
+  m_GameObject: {fileID: 1767121422}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_ProvidesContacts: 0
   m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 784a6164351d84e449e7ddaa8f0364d2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ManagedTerrain
---- !u!4 &1938707328
+  serializedVersion: 3
+  m_Height: 1.5
+  m_Radius: 0.4
+  m_SlopeLimit: 89
+  m_StepOffset: 0.3
+  m_SkinWidth: 0.08
+  m_MinMoveDistance: 0.001
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!4 &1767121428
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1938707326}
+  m_GameObject: {fileID: 1767121422}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -523,11 +616,49 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1767121429
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1767121422}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe2b0608f36e924489ab22acb670941b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerAuthoring
+--- !u!114 &1767121430
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1767121422}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 59acdf50fe2eb23439e45523c4bd3781, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerController
+  _WalkSpeed: 6
+  _RunSpeed: 11
+  _LimitDiagonalSpeed: 1
+  _ToggleRun: 0
+  _JumpSpeed: 8
+  _Gravity: 20
+  _FallingThreshold: 10
+  _SlideWhenOverSlopeLimit: 0
+  _SlideOnTaggedObjects: 0
+  _SlideSpeed: 12
+  _AirControl: 0
+  _AntiBumpFactor: 0.75
+  _AntiBunnyHopFactor: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 1938707328}
+  - {fileID: 131074366}
   - {fileID: 705507995}
+  - {fileID: 1767121428}
   - {fileID: 1617038208}
   - {fileID: 1643320450}

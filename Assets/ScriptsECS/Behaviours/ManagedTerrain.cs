@@ -1,6 +1,7 @@
 using UnityEngine;
 
-namespace jedjoud.VoxelTerrain {
+namespace Ruri.Voxel
+{
     public class ManagedTerrain : MonoBehaviour {
         public static ManagedTerrain instance;
 
