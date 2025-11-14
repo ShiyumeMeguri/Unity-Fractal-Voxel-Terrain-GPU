@@ -24,6 +24,7 @@ namespace Ruri.Voxel
                 {
                     ChunkSize = authoring.ChunkSize,
                     PaddedChunkSize = authoring.ChunkSize + 2, // 直接在这里计算Padding后的大小
+                    ChunkSpawnSize = authoring.ChunkSpawnSize
                 });
 
                 // 2. 烘焙网格生成器配置
@@ -39,7 +40,7 @@ namespace Ruri.Voxel
                     VoxelComputeShader = authoring.VoxelComputeShader
                 });
 
-                // 4. [新增] 烘焙Readback配置，确保系统可以启动
+                // 4. [修正] 烘焙Readback配置，以激活TerrainReadbackSystem
                 AddComponent(entity, new TerrainReadbackConfig());
             }
         }

@@ -29,7 +29,7 @@ public partial class TerrainReadbackSystem : SystemBase
     {
         RequireForUpdate<TerrainConfig>();
         RequireForUpdate<TerrainResources>();
-        RequireForUpdate<TerrainChunkRequestReadbackTag>();
+        RequireForUpdate<TerrainReadbackConfig>(); // 确保系统启动
 
         _free = true;
         _disposed = false;
@@ -80,7 +80,7 @@ public partial class TerrainReadbackSystem : SystemBase
         int voxelsPerChunk = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
         int totalVoxels = voxelsPerChunk * BATCH_SIZE;
 
-        if (_voxelBuffer == null || _voxelBuffer.count != totalVoxels)
+        if (_voxelBuffer == null || _voxelBuffer.count < totalVoxels)
         {
             _voxelBuffer?.Release();
             _voxelBuffer = new ComputeBuffer(totalVoxels, UnsafeUtility.SizeOf<VoxelData>());
@@ -121,7 +121,8 @@ public partial class TerrainReadbackSystem : SystemBase
         Graphics.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
 
-        AsyncGPUReadback.Request(_voxelBuffer, OnVoxelDataReady);
+        // 使用委托来处理回调，这在SystemBase中是安全的
+        AsyncGPUReadback.Request(_voxelBuffer, numToProcess * voxelsPerChunk * UnsafeUtility.SizeOf<VoxelData>(), 0, OnVoxelDataReady);
     }
 
     private void OnVoxelDataReady(AsyncGPUReadbackRequest request)
@@ -144,12 +145,20 @@ public partial class TerrainReadbackSystem : SystemBase
             Entity entity = _batchEntities[i];
             if (!SystemAPI.Exists(entity)) continue;
 
+            // [修正] 我们需要为每个区块分配自己的持久化NativeArray
             var voxels = new NativeArray<VoxelData>(voxelsPerChunk, Allocator.Persistent);
             var sourceSlice = _readbackData.GetSubArray(i * voxelsPerChunk, voxelsPerChunk);
 
             var copyJob = new CopyJob { Source = sourceSlice, Destination = voxels };
             _copyHandles[i] = copyJob.Schedule();
 
+            // 为实体添加/设置TerrainChunkVoxels组件
+            if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
+            {
+                // 如果已经存在，先释放旧数据
+                var oldData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
+                oldData.Dispose();
+            }
             SystemAPI.SetComponent(entity, new TerrainChunkVoxels { Voxels = voxels });
             SystemAPI.SetComponentEnabled<TerrainChunkVoxels>(entity, true);
         }
@@ -163,7 +172,6 @@ public partial class TerrainReadbackSystem : SystemBase
         foreach (var entity in _batchEntities)
         {
             if (!SystemAPI.Exists(entity)) continue;
-
             SystemAPI.SetComponentEnabled<TerrainChunkVoxelsReadyTag>(entity, true);
         }
         ResetState();

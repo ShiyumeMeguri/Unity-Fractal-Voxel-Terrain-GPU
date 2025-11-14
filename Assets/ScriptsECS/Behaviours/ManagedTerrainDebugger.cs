@@ -36,7 +36,10 @@ namespace Ruri.Voxel
 
             void MakeBackgroundOpaque()
             {
-                GUI.Box(new Rect(0, 0, 350, offset + 20), "");
+                for (int i = 0; i < 3; i++) // Draw a few times for opacity
+                {
+                    GUI.Box(new Rect(0, 0, 350, offset + 20), "");
+                }
             }
 
             // [修正] 查询正确的组件类型 Ruri.Voxel.Chunk
