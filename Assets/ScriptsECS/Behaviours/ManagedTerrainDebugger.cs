@@ -42,7 +42,6 @@ namespace Ruri.Voxel
                 }
             }
 
-            // [修正] 查询正确的组件类型 Ruri.Voxel.Chunk
             EntityQuery totalChunks = world.EntityManager.CreateEntityQuery(typeof(Chunk));
             EntityQuery chunksAwaitingGpuData = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkRequestReadbackTag));
             EntityQuery chunksAwaitingMeshing = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkRequestMeshingTag));
@@ -59,7 +58,6 @@ namespace Ruri.Voxel
             Label($"# Chunks in \"End of Pipe\": {chunksEndOfPipe.CalculateEntityCount()}");
             Label($"");
 
-            // [修正] 确保查询单例存在
             if (readySystemsQuery.HasSingleton<TerrainReadySystems>())
             {
                 TerrainReadySystems ready = readySystemsQuery.GetSingleton<TerrainReadySystems>();
@@ -87,7 +85,6 @@ namespace Ruri.Voxel
             if (!debugChunkBounds || world == null || !world.IsCreated)
                 return;
 
-            // [修正] 查询正确的组件类型 Ruri.Voxel.Chunk
             EntityQuery meshedChunksQuery = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkMesh), typeof(WorldRenderBounds));
 
             Gizmos.color = Color.green;
@@ -95,7 +92,6 @@ namespace Ruri.Voxel
 
             foreach (var chunk in visibleBounds)
             {
-                // [修正] 添加必要的类型转换
                 Gizmos.DrawWireCube((Vector3)chunk.Value.Center, (Vector3)chunk.Value.Extents * 2);
             }
         }

@@ -57,10 +57,9 @@ public partial class TerrainReadbackSystem : SystemBase
         ref var readySystems = ref SystemAPI.GetSingletonRW<TerrainReadySystems>().ValueRW;
         readySystems.readback = query.IsEmpty && _free;
 
-        // [调试信息]
-        if (UnityEngine.Time.frameCount % 60 == 0) // 每秒打印一次状态
+        if (UnityEngine.Time.frameCount % 120 == 0)
         {
-            Debug.Log($"[TerrainReadbackSystem] OnUpdate: Free = {_free}, Query Empty = {query.IsEmpty}, Ready Flag = {readySystems.readback}");
+            Debug.Log($"[TerrainReadbackSystem] OnUpdate: Free = {_free}, Chunks to Readback = {query.CalculateEntityCount()}, Ready Flag = {readySystems.readback}");
         }
 
         if (_free)
@@ -95,7 +94,7 @@ public partial class TerrainReadbackSystem : SystemBase
             _voxelBuffer = new ComputeBuffer(totalVoxelsInBatch, UnsafeUtility.SizeOf<VoxelData>());
             if (_readbackData.IsCreated) _readbackData.Dispose();
             _readbackData = new NativeArray<VoxelData>(totalVoxelsInBatch, Allocator.Persistent);
-            Debug.Log($"[TerrainReadbackSystem] Re-allocated GPU buffers for batch size {BATCH_SIZE}.");
+            Debug.Log($"[TerrainReadbackSystem] Allocated GPU buffers for batch size {BATCH_SIZE}.");
         }
 
         using var entities = query.ToEntityArray(Allocator.Temp);
@@ -165,11 +164,9 @@ public partial class TerrainReadbackSystem : SystemBase
             var copyJob = new CopyJob { Source = sourceSlice, Destination = voxels };
             _copyHandles[i] = copyJob.Schedule();
 
-            // 确保先释放旧数据（如果存在）
-            if (SystemAPI.HasComponent<TerrainChunkVoxels>(entity))
+            if (SystemAPI.IsComponentEnabled<TerrainChunkVoxels>(entity))
             {
-                var oldData = SystemAPI.GetComponent<TerrainChunkVoxels>(entity);
-                oldData.Dispose();
+                SystemAPI.GetComponent<TerrainChunkVoxels>(entity).Dispose();
             }
 
             SystemAPI.SetComponent(entity, new TerrainChunkVoxels { Voxels = voxels, AsyncWriteJobHandle = _copyHandles[i] });

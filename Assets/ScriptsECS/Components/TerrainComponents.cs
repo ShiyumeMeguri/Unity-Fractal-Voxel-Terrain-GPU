@@ -12,18 +12,6 @@ namespace Ruri.Voxel
         public int2 ChunkSpawnSize;
     }
 
-    public class TerrainResources : IComponentData
-    {
-        public Material ChunkMaterial;
-        public ComputeShader VoxelComputeShader;
-    }
-
-    // [修正] 从 struct 改为 class 以匹配 AddComponentObject API
-    public class TerrainMesherConfig : IComponentData
-    {
-        public int meshJobsPerTick;
-    }
-
     public struct VoxelEditRequest : IComponentData
     {
         public enum EditType { SetBlock, ModifySphere }

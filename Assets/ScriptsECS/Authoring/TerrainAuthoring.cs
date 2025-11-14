@@ -5,6 +5,21 @@ using UnityEngine;
 
 namespace Ruri.Voxel
 {
+    // [新增] 将相关组件定义移至此处，保持逻辑内聚
+    public class TerrainResources : IComponentData
+    {
+        public Material ChunkMaterial;
+        public ComputeShader VoxelComputeShader;
+    }
+
+    public class TerrainMesherConfig : IComponentData
+    {
+        public int meshJobsPerTick;
+    }
+
+    public struct TerrainReadbackConfig : IComponentData { }
+
+
     public class TerrainAuthoring : MonoBehaviour
     {
         public int3 ChunkSize = new int3(32, 32, 32);
@@ -42,9 +57,6 @@ namespace Ruri.Voxel
 
                 // 4. [修正] 烘焙Readback配置，这是激活TerrainReadbackSystem的关键！
                 AddComponent(entity, new TerrainReadbackConfig());
-
-                // [调试信息] 确认Authoring已执行
-                Debug.Log("[TerrainAuthoring.Baker] Successfully baked all terrain singleton components.");
             }
         }
     }
