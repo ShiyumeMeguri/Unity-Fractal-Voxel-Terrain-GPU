@@ -1,5 +1,4 @@
-﻿
-// Authoring/TerrainAuthoring.cs
+﻿// Authoring/TerrainAuthoring.cs
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -25,11 +24,9 @@ namespace Ruri.Voxel
                 {
                     ChunkSize = authoring.ChunkSize,
                     PaddedChunkSize = authoring.ChunkSize + 2, // 直接在这里计算Padding后的大小
-                    ChunkSpawnSize = authoring.ChunkSpawnSize,
                 });
 
                 // 2. 烘焙网格生成器配置
-                // [修正] 由于 TerrainMesherConfig 已改为 class，这里必须使用 AddComponentObject
                 AddComponentObject(entity, new TerrainMesherConfig
                 {
                     meshJobsPerTick = authoring.MeshJobsPerTick
@@ -41,6 +38,9 @@ namespace Ruri.Voxel
                     ChunkMaterial = authoring.ChunkMaterial,
                     VoxelComputeShader = authoring.VoxelComputeShader
                 });
+
+                // 4. [新增] 烘焙Readback配置，确保系统可以启动
+                AddComponent(entity, new TerrainReadbackConfig());
             }
         }
     }

@@ -1,5 +1,4 @@
-﻿// Assets/ScriptsECS/Behaviours/ManagedTerrainDebugger.cs
-using Ruri.Voxel; // 修正命名空间
+﻿// Behaviours/ManagedTerrainDebugger.cs
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
@@ -18,6 +17,7 @@ namespace Ruri.Voxel
 
         private void Start()
         {
+            // 遵循框架，在MonoBehaviour中通过World.DefaultGameObjectInjectionWorld访问ECS世界
             world = World.DefaultGameObjectInjectionWorld;
         }
 
@@ -36,18 +36,16 @@ namespace Ruri.Voxel
 
             void MakeBackgroundOpaque()
             {
-                for (int i = 0; i < 5; i++)
-                {
-                    GUI.Box(new Rect(0, 0, 350, offset + 20), "");
-                }
+                GUI.Box(new Rect(0, 0, 350, offset + 20), "");
             }
 
+            // [修正] 查询正确的组件类型 Ruri.Voxel.Chunk
             EntityQuery totalChunks = world.EntityManager.CreateEntityQuery(typeof(Chunk));
             EntityQuery chunksAwaitingGpuData = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkRequestReadbackTag));
             EntityQuery chunksAwaitingMeshing = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkRequestMeshingTag));
             EntityQuery meshedChunks = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkMesh));
             EntityQuery chunksEndOfPipe = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkEndOfPipeTag));
-            EntityQuery readySystems = world.EntityManager.CreateEntityQuery(typeof(TerrainReadySystems));
+            EntityQuery readySystemsQuery = world.EntityManager.CreateEntityQuery(typeof(TerrainReadySystems));
 
             GUI.contentColor = Color.white;
             Label($"--- Ruri Voxel ECS Debug ---");
@@ -58,12 +56,17 @@ namespace Ruri.Voxel
             Label($"# Chunks in \"End of Pipe\": {chunksEndOfPipe.CalculateEntityCount()}");
             Label($"");
 
-            if (readySystems.HasSingleton<TerrainReadySystems>())
+            // [修正] 确保查询单例存在
+            if (readySystemsQuery.HasSingleton<TerrainReadySystems>())
             {
-                TerrainReadySystems ready = readySystems.GetSingleton<TerrainReadySystems>();
+                TerrainReadySystems ready = readySystemsQuery.GetSingleton<TerrainReadySystems>();
                 Label($"Manager System Ready: " + ready.manager);
                 Label($"Readback System Ready: " + ready.readback);
                 Label($"Mesher System Ready: " + ready.mesher);
+            }
+            else
+            {
+                Label("TerrainReadySystems singleton not found.");
             }
 
             MakeBackgroundOpaque();
@@ -78,26 +81,19 @@ namespace Ruri.Voxel
 
         private void OnDrawGizmos()
         {
-            if (world == null || !world.IsCreated)
+            if (!debugChunkBounds || world == null || !world.IsCreated)
                 return;
 
-            // 严格遵循原框架的查询和绘制逻辑，但移除 Occlusion 和 Segment
-            if (debugChunkBounds)
+            // [修正] 查询正确的组件类型 Ruri.Voxel.Chunk
+            EntityQuery meshedChunksQuery = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkMesh), typeof(WorldRenderBounds));
+
+            Gizmos.color = Color.green;
+            using var visibleBounds = meshedChunksQuery.ToComponentDataArray<WorldRenderBounds>(Allocator.Temp);
+
+            foreach (var chunk in visibleBounds)
             {
-                // 创建一个查询来获取所有已生成网格并拥有渲染边界的区块
-                EntityQuery meshedChunksQuery = world.EntityManager.CreateEntityQuery(typeof(Chunk), typeof(TerrainChunkMesh), typeof(WorldRenderBounds));
-
-                Gizmos.color = Color.green;
-
-                // 使用 EntityManager 的 API 从查询中获取组件数据
-                using var visibleBounds = meshedChunksQuery.ToComponentDataArray<WorldRenderBounds>(Allocator.Temp);
-
-                foreach (var chunk in visibleBounds)
-                {
-                    // 严格遵循原框架的绘制API：Center 和 Extents * 2
-                    // 并进行必要的类型转换
-                    Gizmos.DrawWireCube((Vector3)chunk.Value.Center, (Vector3)chunk.Value.Extents * 2);
-                }
+                // [修正] 添加必要的类型转换
+                Gizmos.DrawWireCube((Vector3)chunk.Value.Center, (Vector3)chunk.Value.Extents * 2);
             }
         }
     }
